@@ -36,7 +36,6 @@ object OpticalPresets {
                 positionZMm = 50.0,
                 clearApertureMm = 30.0,
                 focalLengthMm = 50.0,
-                thicknessMm = 6.0,
                 material = GlassMaterial.N_BK7
             )
         )
@@ -63,7 +62,6 @@ object OpticalPresets {
                 positionZMm = 60.0,
                 clearApertureMm = 35.0,
                 focalLengthMm = 60.0,
-                thicknessMm = 8.0,
                 material = GlassMaterial.N_BK7
             )
         )
@@ -90,7 +88,6 @@ object OpticalPresets {
                 positionZMm = 30.0,
                 clearApertureMm = 20.0,
                 focalLengthMm = 30.0,
-                thicknessMm = 5.0,
                 material = GlassMaterial.N_BK7
             )
         )
@@ -142,7 +139,6 @@ object OpticalPresets {
                 positionZMm = 20.0,
                 clearApertureMm = 15.0,
                 focalLengthMm = 25.0,
-                thicknessMm = 4.0,
                 material = GlassMaterial.N_BK7
             ),
             OpticalElement(
@@ -152,13 +148,47 @@ object OpticalPresets {
                 positionZMm = 120.0,
                 clearApertureMm = 40.0,
                 focalLengthMm = 75.0,
-                thicknessMm = 8.0,
                 material = GlassMaterial.N_BK7
             )
         )
     )
 
+    val LIGHT_COLLECTING_DETECTOR = OpticalPreset(
+        name = "Light Collector & Detector Screen",
+        description = "Light collecting lens focusing light onto a circular detector screen aperture.",
+        source = LightSource(
+            name = "520nm Source",
+            sourceType = SourceType.LED,
+            cwlNm = 520.0,
+            opticalPowerW = 1.0,
+            divergenceXDeg = 40.0,
+            divergenceYDeg = 40.0,
+            emitterWidthMm = 1.0,
+            emitterHeightMm = 1.0,
+            positionZMm = 0.0
+        ),
+        elements = listOf(
+            OpticalElement(
+                id = "collector_lens",
+                name = "Collector Lens",
+                type = OpticalElementType.PLANO_CONVEX,
+                positionZMm = 50.0,
+                clearApertureMm = 40.0,
+                focalLengthMm = 60.0,
+                material = GlassMaterial.N_BK7
+            ),
+            OpticalElement(
+                id = "detector_screen",
+                name = "Detector Screen",
+                type = OpticalElementType.DETECTOR,
+                positionZMm = 110.0,
+                clearApertureMm = 12.0
+            )
+        )
+    )
+
     val ALL_PRESETS = listOf(
+        LIGHT_COLLECTING_DETECTOR,
         LED_COLLIMATOR,
         ACHROMATIC_DOUBLET_PRESET,
         LASER_DIODE_COLLIMATOR,

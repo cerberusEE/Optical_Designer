@@ -15,15 +15,23 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.optical_designer.engine.AnalyticalOpticsEngine
 import com.example.optical_designer.engine.AnalyticalOpticsResult
+import com.example.optical_designer.engine.DetectorAnalysisResult
 import com.example.optical_designer.model.LightSource
 import com.example.optical_designer.model.OpticalElement
-import kotlin.math.round
+import com.example.optical_designer.model.OpticalElementType
+import com.example.optical_designer.storage.ProjectRepository
+import com.example.optical_designer.util.NumberFormatUtil
 
 @Composable
 fun AnalysisView(
@@ -32,48 +40,188 @@ fun AnalysisView(
     result: AnalyticalOpticsResult,
     modifier: Modifier = Modifier
 ) {
+    val detResult = result.detectorResult
+    val detectorZ = detResult?.detectorZMm
+        ?: elements.firstOrNull { it.type == OpticalElementType.DETECTOR }?.positionZMm
+        ?: (elements.maxOfOrNull { it.positionZMm } ?: 180.0)
+
+    val defaultRangeMeters = detectorZ / 1000.0
+
+    // Preserved across tab switches and app restarts (stored in persistent platform storage, not project data)
+    var targetRangeZMeters by remember {
+        mutableStateOf(ProjectRepository.getSavedEvaluationRangeMeters() ?: defaultRangeMeters)
+    }
+
+    fun updateTargetRange(newRangeMeters: Double) {
+        targetRangeZMeters = newRangeMeters
+        if ((!newRangeMeters.isNaN()) && (!newRangeMeters.isInfinite()) && (newRangeMeters >= 0.0)) {
+            ProjectRepository.saveEvaluationRangeMeters(newRangeMeters)
+        }
+    }
+
+    val irradianceAtRange = remember(targetRangeZMeters, result) {
+        AnalyticalOpticsEngine.calculateIrradianceAtRange(result, targetRangeZMeters * 1000.0)
+    }
+
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // --- Overall Optical Efficiency Card ---
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
-                )
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Net Optical Efficiency",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
+        // --- Detector Screen / Aperture Analysis Card (Shown ONLY if a Detector Screen is present) ---
+        if (detResult != null) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f)
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "Detector Screen & Aperture Analysis",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                    Text(
-                        text = "${result.opticalEfficiencyPct.format(1)}%",
-                        fontSize = 36.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = if (result.opticalEfficiencyPct > 70) Color(0xFF2E7D32) else Color(0xFFD84315)
-                    )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Text(
+                                    text = "Integrated Power on Detector",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                )
+                                Text(
+                                    text = NumberFormatUtil.formatPower(detResult.landedPowerW),
+                                    fontSize = 32.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFF2E7D32)
+                                )
+                            }
+                            Column {
+                                Text(
+                                    text = "Detector Efficiency",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                )
+                                Text(
+                                    text = "${NumberFormatUtil.formatToDisplay(detResult.opticalEfficiencyPct)}%",
+                                    fontSize = 32.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = if (detResult.opticalEfficiencyPct > 50) Color(0xFF2E7D32) else Color(0xFFD84315)
+                                )
+                            }
+                        }
 
-                    Spacer(modifier = Modifier.height(6.dp))
-                    LinearProgressIndicator(
-                        progress = { (result.opticalEfficiencyPct / 100.0).toFloat().coerceIn(0f, 1f) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(8.dp),
-                        color = if (result.opticalEfficiencyPct > 70) Color(0xFF2E7D32) else Color(0xFFD84315)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        LinearProgressIndicator(
+                            progress = { (detResult.opticalEfficiencyPct / 100.0).toFloat().coerceIn(0f, 1f) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(8.dp),
+                            color = if (detResult.opticalEfficiencyPct > 50) Color(0xFF2E7D32) else Color(0xFFD84315)
+                        )
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            AnalysisRow(
+                                label = "Integrated Irradiance on Detector",
+                                value = NumberFormatUtil.formatIrradiance(detResult.integratedIrradianceWm2),
+                                subtitle = "Power density integrated over circular screen",
+                                valueColor = Color(0xFF2E7D32),
+                                modifier = Modifier.weight(1.5f)
+                            )
+                            AnalysisRow(
+                                label = "Encircled Power",
+                                value = "${NumberFormatUtil.formatToDisplay(detResult.encircledPowerPct)}%",
+                                subtitle = "Captured fraction of arriving beam",
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            AnalysisRow(
+                                label = "Beam Spot Diameter",
+                                value = NumberFormatUtil.formatDistanceUnit(detResult.spotDiameterMm),
+                                subtitle = "Arriving at Z = ${NumberFormatUtil.formatToDisplay(detResult.detectorZMm / 1000.0, 3)} m",
+                                modifier = Modifier.weight(1f)
+                            )
+                            AnalysisRow(
+                                label = "Screen Circular Aperture Ø",
+                                value = NumberFormatUtil.formatDistanceUnit(detResult.detectorApertureMm),
+                                subtitle = if (detResult.spilloverLossPct > 0.1) {
+                                    "Spillover loss: ${NumberFormatUtil.formatToDisplay(detResult.spilloverLossPct)}%"
+                                } else {
+                                    "Aperture fill: ${NumberFormatUtil.formatToDisplay(detResult.apertureFillPct)}%"
+                                },
+                                valueColor = if (detResult.spilloverLossPct > 10.0) Color(0xFFD84315) else Color.Unspecified,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = getDetectorGuidance(detResult),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                }
+            }
+        } else {
+            // --- Overall System Optical Efficiency Card (Shown when NO Detector Screen is present) ---
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
                     )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "Net System Optical Efficiency",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Text(
+                            text = "${NumberFormatUtil.formatToDisplay(result.opticalEfficiencyPct)}%",
+                            fontSize = 36.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = if (result.opticalEfficiencyPct > 70) Color(0xFF2E7D32) else Color(0xFFD84315)
+                        )
+
+                        Spacer(modifier = Modifier.height(6.dp))
+                        LinearProgressIndicator(
+                            progress = { (result.opticalEfficiencyPct / 100.0).toFloat().coerceIn(0f, 1f) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(8.dp),
+                            color = if (result.opticalEfficiencyPct > 70) Color(0xFF2E7D32) else Color(0xFFD84315)
+                        )
+                    }
                 }
             }
         }
 
-        // --- Detailed Efficiency & Loss Breakdown Card ---
+        // --- System Radiant Intensity & Target Range Analysis Card ---
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -83,7 +231,76 @@ fun AnalysisView(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "Efficiency Loss Analysis",
+                        text = "Radiant Intensity & Range Analysis",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        AnalysisRow(
+                            label = "System Radiant Intensity",
+                            value = NumberFormatUtil.formatRadiantIntensity(result.radiantIntensityWsr),
+                            subtitle = "Directional flux leaving system",
+                            valueColor = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        AnalysisRow(
+                            label = "Net Output Power",
+                            value = NumberFormatUtil.formatPower(result.outputPowerW),
+                            subtitle = "Source flux: ${NumberFormatUtil.formatPower(result.sourcePowerW)}",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    ScientificNumberTextField(
+                        value = targetRangeZMeters,
+                        onValueChange = { updateTargetRange(it) },
+                        label = "Evaluation Range Z (m)",
+                        allowNegative = false,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        AnalysisRow(
+                            label = "Irradiance at Range",
+                            value = NumberFormatUtil.formatIrradiance(irradianceAtRange.irradianceWm2),
+                            subtitle = "Power density at Z = ${NumberFormatUtil.formatToDisplay(targetRangeZMeters, 3)} m",
+                            valueColor = Color(0xFF2E7D32),
+                            modifier = Modifier.weight(1.5f)
+                        )
+                        AnalysisRow(
+                            label = "Spot Diameter",
+                            value = NumberFormatUtil.formatDistanceUnit(irradianceAtRange.spotDiameterMm),
+                            subtitle = "Area: ${NumberFormatUtil.formatToDisplay(irradianceAtRange.spotAreaM2, 3)} m²",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+        }
+
+        // --- Optical Efficiency & Loss Breakdown Card ---
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Efficiency & Loss Breakdown",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -95,14 +312,14 @@ fun AnalysisView(
                     ) {
                         AnalysisRow(
                             label = "Geometric Collection",
-                            value = "${result.geometricCollectionPct.format(1)}%",
-                            subtitle = "Captured within clear aperture",
+                            value = "${NumberFormatUtil.formatToDisplay(result.geometricCollectionPct)}%",
+                            subtitle = "Captured within clear apertures",
                             modifier = Modifier.weight(1f)
                         )
                         AnalysisRow(
-                            label = "Cropped Aperture Loss",
-                            value = "${result.croppedLossPct.format(1)}%",
-                            subtitle = "Lost due to lens size limit",
+                            label = "Aperture Crop Loss",
+                            value = "${NumberFormatUtil.formatToDisplay(result.croppedLossPct)}%",
+                            subtitle = "Lost to lens aperture boundary",
                             valueColor = if (result.croppedLossPct > 20) Color(0xFFD84315) else Color.Unspecified,
                             modifier = Modifier.weight(1f)
                         )
@@ -116,19 +333,19 @@ fun AnalysisView(
                     ) {
                         AnalysisRow(
                             label = "Glass Transmission",
-                            value = "${result.fresnelTransmissionPct.format(1)}%",
+                            value = "${NumberFormatUtil.formatToDisplay(result.fresnelTransmissionPct)}%",
                             subtitle = "Transmitted through optics",
                             modifier = Modifier.weight(1f)
                         )
                         AnalysisRow(
                             label = "Surface Reflection Loss",
-                            value = "${result.reflectionLossPct.format(1)}%",
-                            subtitle = "Uncoated glass Fresnel loss",
+                            value = "${NumberFormatUtil.formatToDisplay(result.reflectionLossPct)}%",
+                            subtitle = "Glass Fresnel surface reflection",
                             modifier = Modifier.weight(1f)
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
                     Text(
                         text = getEfficiencyGuidance(result),
                         style = MaterialTheme.typography.bodySmall,
@@ -138,7 +355,7 @@ fun AnalysisView(
             }
         }
 
-        // --- Beam & Angular Performance Card ---
+        // --- Beam & Aberration Performance Card ---
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -148,7 +365,7 @@ fun AnalysisView(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "Beam & Divergence Performance",
+                        text = "Beam & Aberration Performance",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -159,52 +376,17 @@ fun AnalysisView(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         AnalysisRow(
-                            label = "Input Source Divergence",
-                            value = "${source.divergenceYDeg.format(1)}°",
+                            label = "Source Divergence",
+                            value = "${NumberFormatUtil.formatToDisplay(source.divergenceYDeg)}°",
                             modifier = Modifier.weight(1f)
                         )
                         AnalysisRow(
                             label = "Output Beam Divergence",
-                            value = "${result.outputDivergenceDeg.format(1)}°",
+                            value = "${NumberFormatUtil.formatToDisplay(result.outputDivergenceDeg)}°",
                             modifier = Modifier.weight(1f)
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        AnalysisRow(
-                            label = "Emitter Width/Height",
-                            value = "${source.emitterWidthMm} × ${source.emitterHeightMm} mm",
-                            modifier = Modifier.weight(1f)
-                        )
-                        AnalysisRow(
-                            label = "Spot Size at Detector",
-                            value = "${result.spotDiameterAtDetectorMm.format(1)} mm",
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
-            }
-        }
-
-        // --- Spherical Aberration Card ---
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Spherical Aberration Analysis",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
                     Spacer(modifier = Modifier.height(12.dp))
 
                     Row(
@@ -212,10 +394,19 @@ fun AnalysisView(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         AnalysisRow(
-                            label = "Longitudinal Spherical Aberration",
-                            value = "${result.sphericalAberrationMm.format(2)} mm",
-                            subtitle = "Marginal vs Paraxial focal shift"
+                            label = "Spherical Aberration",
+                            value = "${NumberFormatUtil.formatToDisplay(result.sphericalAberrationMm)} mm",
+                            subtitle = "Marginal vs Paraxial focal shift",
+                            modifier = Modifier.weight(1f)
                         )
+                        detResult?.bestFocusZMm?.let { bestZ ->
+                            AnalysisRow(
+                                label = "Paraxial Focal Z",
+                                value = "${NumberFormatUtil.formatToDisplay(bestZ / 1000.0, 3)} m",
+                                subtitle = "Optimal focus distance",
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
@@ -228,7 +419,7 @@ fun AnalysisView(
             }
         }
 
-        // --- System Summary Table ---
+        // --- Optical Prescription Summary ---
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -238,14 +429,14 @@ fun AnalysisView(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "Optical Prescription Summary",
+                        text = "Optical System Prescription",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
-                        text = "Source: ${source.name} (${source.cwlNm.format(0)}nm, ${source.divergenceYDeg.format(0)}° div)",
+                        text = "Source: ${source.name} (${NumberFormatUtil.formatToDisplay(source.cwlNm)}nm, ${NumberFormatUtil.formatPower(source.opticalPowerW)}, ${NumberFormatUtil.formatToDisplay(source.divergenceYDeg)}° div)",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -260,12 +451,16 @@ fun AnalysisView(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = "@ Z=${elem.positionZMm.format(0)}mm: ${elem.name}",
+                                text = "@ Z=${NumberFormatUtil.formatToDisplay(elem.positionZMm / 1000.0, 3)}m: ${elem.name}",
                                 style = MaterialTheme.typography.bodySmall,
                                 modifier = Modifier.weight(1.5f)
                             )
                             Text(
-                                text = "f=${elem.focalLengthMm.format(0)}mm | Ø${elem.clearApertureMm.format(0)}mm",
+                                text = if (elem.type == OpticalElementType.DETECTOR) {
+                                    "Detector Screen | Ø${NumberFormatUtil.formatToDisplay(elem.clearApertureMm)}mm"
+                                } else {
+                                    "f=${NumberFormatUtil.formatToDisplay(elem.focalLengthMm)}mm | Ø${NumberFormatUtil.formatToDisplay(elem.clearApertureMm)}mm"
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.weight(1f)
@@ -309,32 +504,33 @@ private fun AnalysisRow(
     }
 }
 
+private fun getDetectorGuidance(det: DetectorAnalysisResult): String {
+    return when {
+        det.spilloverLossPct > 20.0 ->
+            "Major spillover loss (${NumberFormatUtil.formatToDisplay(det.spilloverLossPct)}%)! Spot size (${NumberFormatUtil.formatDistanceUnit(det.spotDiameterMm)}) exceeds circular detector screen aperture (${NumberFormatUtil.formatDistanceUnit(det.detectorApertureMm)}). Move detector closer to focal plane or increase detector screen diameter."
+        det.spilloverLossPct > 0.1 ->
+            "Minor spillover loss (${NumberFormatUtil.formatToDisplay(det.spilloverLossPct)}%). Adjust detector position or aperture for 100% light collection."
+        else ->
+            "100% encircled power collection! All light reaching the detector plane is captured within the circular detector aperture (${NumberFormatUtil.formatToDisplay(det.apertureFillPct)}% aperture fill)."
+    }
+}
+
 private fun getEfficiencyGuidance(result: AnalyticalOpticsResult): String {
     return when {
         result.croppedLossPct > 50.0 ->
-            "Major clipping detected (${result.croppedLossPct.format(1)}% lost)! Increase lens clear aperture diameter or place lens closer to the source to collect more light."
+            "Major clipping detected (${NumberFormatUtil.formatToDisplay(result.croppedLossPct)}% lost)! Increase lens clear aperture diameter or place lens closer to the source to collect more light."
         result.croppedLossPct > 10.0 ->
-            "Moderate clipping detected (${result.croppedLossPct.format(1)}% lost). Increasing lens aperture will improve efficiency."
+            "Moderate clipping detected (${NumberFormatUtil.formatToDisplay(result.croppedLossPct)}% lost). Increasing lens aperture will improve efficiency."
         else ->
-            "Geometric collection is high. Remaining loss (${result.reflectionLossPct.format(1)}%) is due to glass surface reflections."
+            "Geometric collection is high. Remaining loss (${NumberFormatUtil.formatToDisplay(result.reflectionLossPct)}%) is due to glass surface reflections."
     }
 }
 
 private fun getAberrationGuidance(result: AnalyticalOpticsResult): String {
     return when {
         result.sphericalAberrationMm > 2.0 ->
-            "Significant spherical aberration detected (${result.sphericalAberrationMm.format(1)} mm shift). Consider reducing lens clear aperture / adding an aperture stop or using a doublet / parabolic mirror."
+            "Significant spherical aberration detected (${NumberFormatUtil.formatToDisplay(result.sphericalAberrationMm)} mm shift). Consider reducing lens clear aperture / adding an aperture stop or using a doublet / parabolic mirror."
         else ->
             "System optical efficiency and beam profile are optimal."
     }
-}
-
-private fun Double.format(digits: Int): String {
-    val factor = when (digits) {
-        0 -> 1.0
-        1 -> 10.0
-        2 -> 100.0
-        else -> 1.0
-    }
-    return (round(this * factor) / factor).toString()
 }

@@ -14,13 +14,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
@@ -28,12 +28,11 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,7 +49,59 @@ import com.example.optical_designer.model.LightSource
 import com.example.optical_designer.model.OpticalElement
 import com.example.optical_designer.model.OpticalElementType
 import com.example.optical_designer.model.SourceType
-import kotlin.math.roundToInt
+import com.example.optical_designer.util.NumberFormatUtil
+
+@Composable
+fun ScientificNumberTextField(
+    value: Double,
+    onValueChange: (Double) -> Unit,
+    label: String,
+    modifier: Modifier = Modifier,
+    placeholder: String = "",
+    minConstraint: Double? = null,
+    maxConstraint: Double? = null,
+    allowNegative: Boolean = true
+) {
+    var textState by remember { mutableStateOf(NumberFormatUtil.formatToDisplay(value)) }
+    var isError by remember { mutableStateOf(false) }
+
+    LaunchedEffect(value) {
+        val currentParsed = NumberFormatUtil.parseDoubleOrNull(textState)
+        if (currentParsed != value) {
+            textState = NumberFormatUtil.formatToDisplay(value)
+            isError = false
+        }
+    }
+
+    OutlinedTextField(
+        value = textState,
+        onValueChange = { newText ->
+            textState = newText
+            val parsed = NumberFormatUtil.parseDoubleOrNull(newText)
+            if (parsed != null) {
+                val validMin = minConstraint == null || parsed >= minConstraint
+                val validMax = maxConstraint == null || parsed <= maxConstraint
+                val validNeg = allowNegative || parsed >= 0.0
+                if (validMin && validMax && validNeg) {
+                    isError = false
+                    onValueChange(parsed)
+                } else {
+                    isError = true
+                }
+            } else {
+                isError = newText.isNotBlank()
+            }
+        },
+        label = { Text(label) },
+        placeholder = if (placeholder.isNotEmpty()) { { Text(placeholder) } } else null,
+        isError = isError,
+        singleLine = true,
+        supportingText = if (isError) {
+            { Text("Invalid number (supports e.g. 100, 1.5e3, 1e6)", color = MaterialTheme.colorScheme.error) }
+        } else null,
+        modifier = modifier
+    )
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -122,7 +173,7 @@ fun ElementsEditorView(
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = "${source.sourceType.displayName} • ${source.cwlNm.roundToInt()}nm Monochromatic",
+                                    text = "${NumberFormatUtil.formatPower(source.opticalPowerW)} • ${source.sourceType.displayName} • ${NumberFormatUtil.formatToDisplay(source.cwlNm)}nm",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -139,11 +190,11 @@ fun ElementsEditorView(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = "Divergence: ${source.divergenceXDeg.roundToInt()}° × ${source.divergenceYDeg.roundToInt()}°",
+                                text = "Divergence: ${NumberFormatUtil.formatToDisplay(source.divergenceXDeg)}° × ${NumberFormatUtil.formatToDisplay(source.divergenceYDeg)}°",
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(
-                                text = "Emitter: ${source.emitterWidthMm} × ${source.emitterHeightMm} mm",
+                                text = "Emitter: ${NumberFormatUtil.formatToDisplay(source.emitterWidthMm)} × ${NumberFormatUtil.formatToDisplay(source.emitterHeightMm)} mm",
                                 style = MaterialTheme.typography.bodyMedium
                             )
                         }
@@ -279,14 +330,22 @@ private fun ElementCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = element.name,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "${element.type.displayName} • ${element.material.name}",
+                        text = if (element.type == OpticalElementType.DETECTOR) {
+                            "Detector Screen • Circular Aperture"
+                        } else if (element.type == OpticalElementType.APERTURE_STOP) {
+                            "Aperture Stop / Iris"
+                        } else if (element.isCoated) {
+                            "${element.type.displayName} • ${element.material.name} (AR Coated ${NumberFormatUtil.formatToDisplay(element.customTransmissionPct, 1)}% T)"
+                        } else {
+                            "${element.type.displayName} • ${element.material.name}"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -300,30 +359,40 @@ private fun ElementCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-            // Real-time Position Z Slider
-            Column {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
+            // Real-time Position Z Manual Entry Edit Box
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ScientificNumberTextField(
+                    value = element.positionZMm,
+                    onValueChange = onPositionChange,
+                    label = "Position Z (mm)",
+                    modifier = Modifier.weight(1.2f)
+                )
+
+                Spacer(modifier = Modifier.width(12.dp))
+
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.End
                 ) {
+                    if (element.type != OpticalElementType.DETECTOR && element.type != OpticalElementType.APERTURE_STOP) {
+                        Text(
+                            text = "f = ${NumberFormatUtil.formatToDisplay(element.focalLengthMm)} mm",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     Text(
-                        text = "Position Z: ${element.positionZMm.roundToInt()} mm",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Text(
-                        text = "f = ${element.focalLengthMm.roundToInt()}mm | Ø ${element.clearApertureMm.roundToInt()}mm",
+                        text = "Ø ${NumberFormatUtil.formatToDisplay(element.clearApertureMm)} mm",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Slider(
-                    value = element.positionZMm.toFloat(),
-                    onValueChange = { onPositionChange(it.toDouble()) },
-                    valueRange = 0f..300f
-                )
             }
 
             Row(
@@ -353,11 +422,13 @@ private fun LightSourceDialog(
 ) {
     var name by remember { mutableStateOf(source.name) }
     var sourceType by remember { mutableStateOf(source.sourceType) }
-    var cwl by remember { mutableStateOf(source.cwlNm.toFloat()) }
-    var divX by remember { mutableStateOf(source.divergenceXDeg.toFloat()) }
-    var divY by remember { mutableStateOf(source.divergenceYDeg.toFloat()) }
-    var emitterW by remember { mutableStateOf(source.emitterWidthMm.toFloat()) }
-    var emitterH by remember { mutableStateOf(source.emitterHeightMm.toFloat()) }
+    var cwl by remember { mutableStateOf(source.cwlNm) }
+    var opticalPower by remember { mutableStateOf(source.opticalPowerW) }
+    var divX by remember { mutableStateOf(source.divergenceXDeg) }
+    var divY by remember { mutableStateOf(source.divergenceYDeg) }
+    var emitterW by remember { mutableStateOf(source.emitterWidthMm) }
+    var emitterH by remember { mutableStateOf(source.emitterHeightMm) }
+    var posZ by remember { mutableStateOf(source.positionZMm) }
 
     var dropdownExpanded by remember { mutableStateOf(false) }
 
@@ -365,7 +436,7 @@ private fun LightSourceDialog(
         onDismissRequest = onDismiss,
         title = { Text("Edit Light Source") },
         text = {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 item {
                     OutlinedTextField(
                         value = name,
@@ -388,7 +459,7 @@ private fun LightSourceDialog(
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = dropdownExpanded) },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .menuAnchor()
+                                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
                         )
                         ExposedDropdownMenu(
                             expanded = dropdownExpanded,
@@ -408,34 +479,74 @@ private fun LightSourceDialog(
                 }
 
                 item {
-                    Text("Wavelength: ${cwl.roundToInt()} nm")
-                    Slider(value = cwl, onValueChange = { cwl = it }, valueRange = 380f..850f)
-                }
-
-                item {
-                    Text("Divergence X (deg): ${divX.roundToInt()}°")
-                    Slider(value = divX, onValueChange = { divX = it }, valueRange = 0f..120f)
-                }
-
-                item {
-                    Text("Divergence Y (deg): ${divY.roundToInt()}°")
-                    Slider(value = divY, onValueChange = { divY = it }, valueRange = 0f..120f)
-                }
-
-                item {
-                    Text("Emitter Size: ${emitterW.format(1)} × ${emitterH.format(1)} mm")
-                    Row {
-                        Slider(
-                            value = emitterW,
-                            onValueChange = { emitterW = it },
-                            valueRange = 0.05f..5f,
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ScientificNumberTextField(
+                            value = cwl,
+                            onValueChange = { cwl = it },
+                            label = "Wavelength (nm)",
+                            minConstraint = 1.0,
+                            allowNegative = false,
                             modifier = Modifier.weight(1f)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Slider(
+                        ScientificNumberTextField(
+                            value = opticalPower,
+                            onValueChange = { opticalPower = it },
+                            label = "Optical Power (W)",
+                            minConstraint = 0.0001,
+                            allowNegative = false,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                item {
+                    ScientificNumberTextField(
+                        value = posZ,
+                        onValueChange = { posZ = it },
+                        label = "Position Z (mm)",
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ScientificNumberTextField(
+                            value = divX,
+                            onValueChange = { divX = it },
+                            label = "Divergence X (°)",
+                            minConstraint = 0.0,
+                            maxConstraint = 180.0,
+                            allowNegative = false,
+                            modifier = Modifier.weight(1f)
+                        )
+                        ScientificNumberTextField(
+                            value = divY,
+                            onValueChange = { divY = it },
+                            label = "Divergence Y (°)",
+                            minConstraint = 0.0,
+                            maxConstraint = 180.0,
+                            allowNegative = false,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ScientificNumberTextField(
+                            value = emitterW,
+                            onValueChange = { emitterW = it },
+                            label = "Emitter Width (mm)",
+                            minConstraint = 0.0001,
+                            allowNegative = false,
+                            modifier = Modifier.weight(1f)
+                        )
+                        ScientificNumberTextField(
                             value = emitterH,
                             onValueChange = { emitterH = it },
-                            valueRange = 0.05f..5f,
+                            label = "Emitter Height (mm)",
+                            minConstraint = 0.0001,
+                            allowNegative = false,
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -448,11 +559,13 @@ private fun LightSourceDialog(
                     source.copy(
                         name = name,
                         sourceType = sourceType,
-                        cwlNm = cwl.toDouble(),
-                        divergenceXDeg = divX.toDouble(),
-                        divergenceYDeg = divY.toDouble(),
-                        emitterWidthMm = emitterW.toDouble(),
-                        emitterHeightMm = emitterH.toDouble()
+                        cwlNm = cwl,
+                        opticalPowerW = opticalPower,
+                        divergenceXDeg = divX,
+                        divergenceYDeg = divY,
+                        emitterWidthMm = emitterW,
+                        emitterHeightMm = emitterH,
+                        positionZMm = posZ
                     )
                 )
             }) {
@@ -501,10 +614,12 @@ private fun EditElementDialog(
     onSave: (OpticalElement) -> Unit
 ) {
     var name by remember { mutableStateOf(element.name) }
-    var focalLength by remember { mutableStateOf(element.focalLengthMm.toFloat()) }
-    var aperture by remember { mutableStateOf(element.clearApertureMm.toFloat()) }
-    var thickness by remember { mutableStateOf(element.thicknessMm.toFloat()) }
+    var posZ by remember { mutableStateOf(element.positionZMm) }
+    var focalLength by remember { mutableStateOf(element.focalLengthMm) }
+    var aperture by remember { mutableStateOf(element.clearApertureMm) }
     var material by remember { mutableStateOf(element.material) }
+    var isCoated by remember { mutableStateOf(element.isCoated) }
+    var customTrans by remember { mutableStateOf(element.customTransmissionPct) }
 
     var matDropdownExpanded by remember { mutableStateOf(false) }
 
@@ -512,55 +627,109 @@ private fun EditElementDialog(
         onDismissRequest = onDismiss,
         title = { Text("Edit ${element.type.displayName}") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Name") },
-                    modifier = Modifier.fillMaxWidth()
-                )
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                item {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text("Name") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                item {
+                    ScientificNumberTextField(
+                        value = posZ,
+                        onValueChange = { posZ = it },
+                        label = "Position Z (mm)",
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
 
                 if (element.type != OpticalElementType.DETECTOR && element.type != OpticalElementType.APERTURE_STOP) {
-                    Text("Focal Length f: ${focalLength.roundToInt()} mm")
-                    Slider(value = focalLength, onValueChange = { focalLength = it }, valueRange = 10f..200f)
-
-                    ExposedDropdownMenuBox(
-                        expanded = matDropdownExpanded,
-                        onExpandedChange = { matDropdownExpanded = it }
-                    ) {
-                        OutlinedTextField(
-                            value = material.name,
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("Glass Material") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = matDropdownExpanded) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .menuAnchor()
+                    item {
+                        ScientificNumberTextField(
+                            value = focalLength,
+                            onValueChange = { focalLength = it },
+                            label = "Focal Length f (mm)",
+                            allowNegative = true,
+                            modifier = Modifier.fillMaxWidth()
                         )
-                        ExposedDropdownMenu(
+                    }
+
+                    item {
+                        ExposedDropdownMenuBox(
                             expanded = matDropdownExpanded,
-                            onDismissRequest = { matDropdownExpanded = false }
+                            onExpandedChange = { matDropdownExpanded = it }
                         ) {
-                            for (mat in GlassMaterial.PRESETS) {
-                                DropdownMenuItem(
-                                    text = { Text("${mat.name} (nd=${mat.nd}, Vd=${mat.vd})") },
-                                    onClick = {
-                                        material = mat
-                                        matDropdownExpanded = false
-                                    }
-                                )
+                            OutlinedTextField(
+                                value = material.name,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Glass Material") },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = matDropdownExpanded) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                            )
+                            ExposedDropdownMenu(
+                                expanded = matDropdownExpanded,
+                                onDismissRequest = { matDropdownExpanded = false }
+                            ) {
+                                for (mat in GlassMaterial.PRESETS) {
+                                    DropdownMenuItem(
+                                        text = { Text("${mat.name} (nd=${mat.nd}, Vd=${mat.vd})") },
+                                        onClick = {
+                                            material = mat
+                                            matDropdownExpanded = false
+                                        }
+                                    )
+                                }
                             }
+                        }
+                    }
+
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "AR Coating / Custom Transmission Override",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Switch(
+                                checked = isCoated,
+                                onCheckedChange = { isCoated = it }
+                            )
+                        }
+                    }
+
+                    if (isCoated) {
+                        item {
+                            ScientificNumberTextField(
+                                value = customTrans,
+                                onValueChange = { customTrans = it },
+                                label = "Optical Transmission (%)",
+                                minConstraint = 0.0,
+                                maxConstraint = 100.0,
+                                allowNegative = false,
+                                modifier = Modifier.fillMaxWidth()
+                            )
                         }
                     }
                 }
 
-                Text("Clear Aperture Ø: ${aperture.roundToInt()} mm")
-                Slider(value = aperture, onValueChange = { aperture = it }, valueRange = 5f..100f)
-
-                if (element.type != OpticalElementType.DETECTOR && element.type != OpticalElementType.APERTURE_STOP) {
-                    Text("Center Thickness: ${thickness.format(1)} mm")
-                    Slider(value = thickness, onValueChange = { thickness = it }, valueRange = 1f..20f)
+                item {
+                    ScientificNumberTextField(
+                        value = aperture,
+                        onValueChange = { aperture = it },
+                        label = if (element.type == OpticalElementType.DETECTOR) "Circular Screen Aperture Ø (mm)" else "Clear Aperture Ø (mm)",
+                        minConstraint = 0.001,
+                        allowNegative = false,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
             }
         },
@@ -569,10 +738,12 @@ private fun EditElementDialog(
                 onSave(
                     element.copy(
                         name = name,
-                        focalLengthMm = focalLength.toDouble(),
-                        clearApertureMm = aperture.toDouble(),
-                        thicknessMm = thickness.toDouble(),
-                        material = material
+                        positionZMm = posZ,
+                        focalLengthMm = focalLength,
+                        clearApertureMm = aperture,
+                        material = material,
+                        isCoated = isCoated,
+                        customTransmissionPct = customTrans
                     )
                 )
             }) { Text("Save") }
@@ -586,20 +757,11 @@ private fun EditElementDialog(
 private fun createDefaultElement(type: OpticalElementType): OpticalElement {
     val id = "elem_${(1000..9999).random()}"
     return when (type) {
-        OpticalElementType.PLANO_CONVEX -> OpticalElement(id, "Plano-Convex Lens", type, 60.0, 30.0, 50.0, 6.0)
-        OpticalElementType.BICONVEX -> OpticalElement(id, "Biconvex Lens", type, 60.0, 30.0, 50.0, 6.0)
-        OpticalElementType.ACHROMATIC_DOUBLET -> OpticalElement(id, "Achromatic Doublet", type, 60.0, 35.0, 60.0, 8.0)
-        OpticalElementType.PARABOLIC_MIRROR -> OpticalElement(id, "Parabolic Mirror", type, 50.0, 40.0, 50.0, 5.0)
-        OpticalElementType.APERTURE_STOP -> OpticalElement(id, "Iris Aperture", type, 40.0, 15.0, 0.0, 1.0)
-        OpticalElementType.DETECTOR -> OpticalElement(id, "Detector Screen", type, 180.0, 50.0, 0.0, 1.0)
+        OpticalElementType.PLANO_CONVEX -> OpticalElement(id, "Plano-Convex Lens", type, 60.0, 30.0, 50.0)
+        OpticalElementType.BICONVEX -> OpticalElement(id, "Biconvex Lens", type, 60.0, 30.0, 50.0)
+        OpticalElementType.ACHROMATIC_DOUBLET -> OpticalElement(id, "Achromatic Doublet", type, 60.0, 35.0, 60.0)
+        OpticalElementType.PARABOLIC_MIRROR -> OpticalElement(id, "Parabolic Mirror", type, 50.0, 40.0, 50.0)
+        OpticalElementType.APERTURE_STOP -> OpticalElement(id, "Iris Aperture", type, 40.0, 15.0, 0.0)
+        OpticalElementType.DETECTOR -> OpticalElement(id, "Detector Screen", type, 180.0, 50.0, 0.0)
     }
-}
-
-private fun Float.format(digits: Int): String {
-    val factor = when (digits) {
-        1 -> 10.0f
-        2 -> 100.0f
-        else -> 1.0f
-    }
-    return (kotlin.math.round(this * factor) / factor).toString()
 }
