@@ -114,11 +114,10 @@ object NumberFormatUtil {
     }
 
     /**
-     * Formats irradiance (W/m²) along with its equivalent in mW/cm² with at most 3 significant digits.
+     * Formats irradiance in W/m² with at most 3 significant digits.
      */
     fun formatIrradiance(wm2: Double): String {
-        val mwCm2 = wm2 / 10.0
-        return "${formatToDisplay(wm2, 3)} W/m² (${formatToDisplay(mwCm2, 3)} mW/cm²)"
+        return "${formatToDisplay(wm2, 3)} W/m²"
     }
 
     /**

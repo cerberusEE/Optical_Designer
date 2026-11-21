@@ -27,6 +27,6 @@ class NumberFormatUtilTest {
         assertEquals("1.23 W", NumberFormatUtil.formatPower(1.23456))
         assertEquals("180 mm", NumberFormatUtil.formatDistanceUnit(180.0))
         assertEquals("1.8 m", NumberFormatUtil.formatDistanceUnit(1800.0))
-        assertEquals("1.23 W/m² (0.123 mW/cm²)", NumberFormatUtil.formatIrradiance(1.23456))
+        assertEquals("1.23 W/m²", NumberFormatUtil.formatIrradiance(1.23456))
     }
 }

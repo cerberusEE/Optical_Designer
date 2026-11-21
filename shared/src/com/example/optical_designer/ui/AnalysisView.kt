@@ -139,7 +139,6 @@ fun AnalysisView(
                                 label = "Integrated Irradiance on Detector",
                                 value = NumberFormatUtil.formatIrradiance(detResult.integratedIrradianceWm2),
                                 subtitle = "Power density integrated over circular screen",
-                                valueColor = Color(0xFF2E7D32),
                                 modifier = Modifier.weight(1.5f)
                             )
                             AnalysisRow(
@@ -276,7 +275,6 @@ fun AnalysisView(
                             label = "Irradiance at Range",
                             value = NumberFormatUtil.formatIrradiance(irradianceAtRange.irradianceWm2),
                             subtitle = "Power density at Z = ${NumberFormatUtil.formatToDisplay(targetRangeZMeters, 3)} m",
-                            valueColor = Color(0xFF2E7D32),
                             modifier = Modifier.weight(1.5f)
                         )
                         AnalysisRow(

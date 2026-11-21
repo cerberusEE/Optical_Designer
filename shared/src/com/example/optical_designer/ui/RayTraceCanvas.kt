@@ -99,26 +99,26 @@ fun RayTraceView(
                     )
                     MetricItem(
                         label = "Detector Efficiency",
-                        value = "${NumberFormatUtil.formatToDisplay(detRes.opticalEfficiencyPct, 1)}%",
+                        value = "${NumberFormatUtil.formatToDisplay(detRes.opticalEfficiencyPct)}%",
                         color = if (detRes.opticalEfficiencyPct > 50) Color(0xFF2E7D32) else Color(0xFFD84315),
                         modifier = Modifier.weight(1f)
                     )
                     MetricItem(
                         label = "Encircled Power",
-                        value = "${NumberFormatUtil.formatToDisplay(detRes.encircledPowerPct, 1)}%",
+                        value = "${NumberFormatUtil.formatToDisplay(detRes.encircledPowerPct)}%",
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.weight(1f)
                     )
                 } else {
                     MetricItem(
                         label = "Efficiency",
-                        value = "${NumberFormatUtil.formatToDisplay(opticsResult.opticalEfficiencyPct, 1)}%",
+                        value = "${NumberFormatUtil.formatToDisplay(opticsResult.opticalEfficiencyPct)}%",
                         color = if (opticsResult.opticalEfficiencyPct > 70) Color(0xFF2E7D32) else Color(0xFFD84315),
                         modifier = Modifier.weight(1f)
                     )
                     MetricItem(
                         label = "Divergence",
-                        value = "${NumberFormatUtil.formatToDisplay(opticsResult.outputDivergenceDeg, 1)}°",
+                        value = "${NumberFormatUtil.formatToDisplay(opticsResult.outputDivergenceDeg)}°",
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.weight(1f)
                     )
