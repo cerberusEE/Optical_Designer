@@ -3,7 +3,6 @@ package com.example.optical_designer.ui
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -36,7 +35,6 @@ enum class NavTab(val title: String) {
     ANALYSIS("Analysis")
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OpticalDesignerApp() {
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -129,7 +127,11 @@ fun OpticalDesignerApp() {
                     RayTraceView(
                         source = lightSource,
                         elements = opticalElements,
-                        opticsResult = opticsResult
+                        opticsResult = opticsResult,
+                        onElementsChange = { newElements ->
+                            opticalElements = newElements
+                            persistActiveSession(updatedElements = newElements)
+                        }
                     )
                 }
                 NavTab.ELEMENTS -> {

@@ -218,7 +218,7 @@ object ProjectJsonSerializer {
             if (parsed is JsonValue.JsonObject) {
                 parseProject(parsed)
             } else null
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
@@ -237,7 +237,7 @@ object ProjectJsonSerializer {
                     if (item is JsonValue.JsonObject) parseProject(item) else null
                 }
             } else emptyList()
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             emptyList()
         }
     }
@@ -272,7 +272,7 @@ object ProjectJsonSerializer {
     }
 
     private fun elementToJsonObject(element: OpticalElement): JsonValue.JsonObject {
-        val fields = mutableMapOf<String, JsonValue>(
+        val fields = mutableMapOf(
             "id" to JsonValue.JsonString(element.id),
             "name" to JsonValue.JsonString(element.name),
             "type" to JsonValue.JsonString(element.type.name),
@@ -328,7 +328,7 @@ object ProjectJsonSerializer {
         val sourceTypeStr = obj.getString("sourceType", SourceType.LED.name)
         val sourceType = try {
             SourceType.valueOf(sourceTypeStr)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             SourceType.LED
         }
 
@@ -350,7 +350,7 @@ object ProjectJsonSerializer {
         val typeStr = obj.getString("type", OpticalElementType.PLANO_CONVEX.name)
         val type = try {
             OpticalElementType.valueOf(typeStr)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             OpticalElementType.PLANO_CONVEX
         }
 

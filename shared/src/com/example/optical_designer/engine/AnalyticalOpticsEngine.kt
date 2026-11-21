@@ -128,8 +128,16 @@ object AnalyticalOpticsEngine {
         for (elem in activeElements) {
             val thickness = elem.thicknessMm
             val zElem = elem.positionZMm
-            val zFront = max(currentZ, zElem - thickness / 2.0)
-            val zBack = max(zFront + 0.01, zElem + thickness / 2.0)
+            val zFront = if (elem.type == OpticalElementType.PLANO_CONVEX) {
+                max(currentZ, zElem)
+            } else {
+                max(currentZ, zElem - thickness / 2.0)
+            }
+            val zBack = if (elem.type == OpticalElementType.PLANO_CONVEX) {
+                max(zFront + 0.01, zElem + thickness)
+            } else {
+                max(zFront + 0.01, zElem + thickness / 2.0)
+            }
 
             // Target Z boundary for free space propagation to element front boundary / DETECTOR
             val zTarget = if (elem.type == OpticalElementType.DETECTOR) zElem else zFront
@@ -141,60 +149,20 @@ object AnalyticalOpticsEngine {
                 val startTopY = getTopUnblockedRadius(rayBundle, emitterHalfHeight + currentZ * initialSlope)
                 val startBottomY = -startTopY
 
-                // Check for intermediate focal waist between currentZ and zTarget
-                val intermediateWaistZ = findWaistZBetween(rayBundle, currentZ, zTarget)
+                propagateRayBundleInPlace(rayBundle, dz)
+                val arrivingTopY = getTopUnblockedRadius(rayBundle, startTopY)
 
-                if (intermediateWaistZ != null) {
-                    val dz1 = intermediateWaistZ - currentZ
-                    val waistRays = propagateRayBundleTemp(rayBundle, dz1)
-                    val waistTopY = getTopUnblockedRadius(waistRays, startTopY)
-
-                    segments.add(
-                        BeamSegment(
-                            startZ = currentZ,
-                            endZ = intermediateWaistZ,
-                            startTopY = startTopY,
-                            startBottomY = startBottomY,
-                            endTopY = waistTopY,
-                            endBottomY = -waistTopY,
-                            color = sourceColor
-                        )
+                segments.add(
+                    BeamSegment(
+                        startZ = currentZ,
+                        endZ = zTarget,
+                        startTopY = startTopY,
+                        startBottomY = startBottomY,
+                        endTopY = arrivingTopY,
+                        endBottomY = -arrivingTopY,
+                        color = sourceColor
                     )
-
-                    val dz2 = zTarget - intermediateWaistZ
-                    propagateRayBundleInPlace(rayBundle, dz1)
-                    val endTopY = getTopUnblockedRadius(propagateRayBundleTemp(rayBundle, dz2), waistTopY)
-
-                    segments.add(
-                        BeamSegment(
-                            startZ = intermediateWaistZ,
-                            endZ = zTarget,
-                            startTopY = waistTopY,
-                            startBottomY = -waistTopY,
-                            endTopY = endTopY,
-                            endBottomY = -endTopY,
-                            color = sourceColor
-                        )
-                    )
-
-                    propagateRayBundleInPlace(rayBundle, dz2)
-                    lastWaistZMm = intermediateWaistZ
-                } else {
-                    propagateRayBundleInPlace(rayBundle, dz)
-                    val endTopY = getTopUnblockedRadius(rayBundle, startTopY)
-
-                    segments.add(
-                        BeamSegment(
-                            startZ = currentZ,
-                            endZ = zTarget,
-                            startTopY = startTopY,
-                            startBottomY = startBottomY,
-                            endTopY = endTopY,
-                            endBottomY = -endTopY,
-                            color = sourceColor
-                        )
-                    )
-                }
+                )
 
                 currentZ = zTarget
             }
@@ -268,14 +236,22 @@ object AnalyticalOpticsEngine {
                 }
             }
 
-            // Propagate rays from zFront to principal plane zElem if not already there
-            if (zElem > currentZ) {
-                val dzToElem = zElem - currentZ
-                propagateRayBundleInPlace(rayBundle, dzToElem)
-                currentZ = zElem
+            // Top radius of transmitted (unblocked) rays entering the element at zFront:
+            val transmittedTopY = if (apertureRadius > 0.0) {
+                min(apertureRadius, beamRadiusAtElem)
+            } else {
+                beamRadiusAtElem
             }
 
-            // 4. Optical Element Refraction / Reflection at Principal Plane zElem: Δu = -y / f
+            // Propagate rays from zFront to refraction plane if not already there
+            val zRefract = if (elem.type == OpticalElementType.PLANO_CONVEX) zFront else zElem
+            if (zRefract > currentZ) {
+                val dzToElem = zRefract - currentZ
+                propagateRayBundleInPlace(rayBundle, dzToElem)
+                currentZ = zRefract
+            }
+
+            // 4. Optical Element Refraction / Reflection at Refraction Plane: Δu = -y / f
             when (elem.type) {
                 OpticalElementType.PLANO_CONVEX,
                 OpticalElementType.BICONVEX,
@@ -290,6 +266,19 @@ object AnalyticalOpticsEngine {
                         }
                     }
                     fresnelTransmissionFraction *= elem.effectiveTransmissionFraction
+
+                    // Track focal waist Z for metrics if rays are converging
+                    val unblocked = rayBundle.filter { !it.isBlocked }
+                    val axialRays = unblocked.filter { abs(it.y0) < 1e-5 }
+                    val candidateRays = axialRays.ifEmpty { unblocked }
+                    val convergingRay = candidateRays.firstOrNull { it.y > 0 && it.u < 0 }
+                    if (convergingRay != null) {
+                        val dzWaist = -convergingRay.y / convergingRay.u
+                        val waistZ = currentZ + dzWaist
+                        if (waistZ > currentZ) {
+                            lastWaistZMm = waistZ
+                        }
+                    }
                 }
                 OpticalElementType.APERTURE_STOP -> {
                     // Pure aperture stop: no slope change
@@ -299,21 +288,20 @@ object AnalyticalOpticsEngine {
                 }
             }
 
-            // 5. Internal propagation through optic thickness from principal plane zElem to zBack
+            // 5. Internal propagation through optic thickness to zBack
             val dzRear = zBack - currentZ
             if (dzRear > 0) {
-                val startTopYLens = getTopUnblockedRadius(rayBundle, 0.1)
                 propagateRayBundleInPlace(rayBundle, dzRear)
-                val endTopYLens = getTopUnblockedRadius(rayBundle, startTopYLens)
+                val exitTopYLens = getTopUnblockedRadius(rayBundle, transmittedTopY)
 
                 segments.add(
                     BeamSegment(
                         startZ = zFront,
                         endZ = zBack,
-                        startTopY = startTopYLens,
-                        startBottomY = -startTopYLens,
-                        endTopY = endTopYLens,
-                        endBottomY = -endTopYLens,
+                        startTopY = transmittedTopY,
+                        startBottomY = -transmittedTopY,
+                        endTopY = exitTopYLens,
+                        endBottomY = -exitTopYLens,
                         color = sourceColor
                     )
                 )
@@ -324,7 +312,13 @@ object AnalyticalOpticsEngine {
 
         // 6. Free-space propagation past final element to viewport boundary (if no detector stopped it)
         if (detectorAnalysisResult == null) {
-            val maxElementZ = activeElements.maxOfOrNull { it.positionZMm + it.thicknessMm / 2.0 } ?: 100.0
+            val maxElementZ = activeElements.maxOfOrNull {
+                if (it.type == OpticalElementType.PLANO_CONVEX) {
+                    it.positionZMm + it.thicknessMm
+                } else {
+                    it.positionZMm + it.thicknessMm / 2.0
+                }
+            } ?: 100.0
             val targetZBound = maxOf(maxViewportZ, source.positionZMm, maxElementZ)
             val endZ = targetZBound + maxOf(60.0, targetZBound * 0.1)
 
@@ -332,58 +326,20 @@ object AnalyticalOpticsEngine {
                 val dz = endZ - currentZ
                 val startTopY = getTopUnblockedRadius(rayBundle, 0.1)
 
-                val intermediateWaistZ = findWaistZBetween(rayBundle, currentZ, endZ)
+                propagateRayBundleInPlace(rayBundle, dz)
+                val endTopY = getTopUnblockedRadius(rayBundle, startTopY)
 
-                if (intermediateWaistZ != null) {
-                    val dz1 = intermediateWaistZ - currentZ
-                    val waistRays = propagateRayBundleTemp(rayBundle, dz1)
-                    val waistTopY = getTopUnblockedRadius(waistRays, startTopY)
-
-                    segments.add(
-                        BeamSegment(
-                            startZ = currentZ,
-                            endZ = intermediateWaistZ,
-                            startTopY = startTopY,
-                            startBottomY = -startTopY,
-                            endTopY = waistTopY,
-                            endBottomY = -waistTopY,
-                            color = sourceColor
-                        )
+                segments.add(
+                    BeamSegment(
+                        startZ = currentZ,
+                        endZ = endZ,
+                        startTopY = startTopY,
+                        startBottomY = -startTopY,
+                        endTopY = endTopY,
+                        endBottomY = -endTopY,
+                        color = sourceColor
                     )
-
-                    val dz2 = endZ - intermediateWaistZ
-                    propagateRayBundleInPlace(rayBundle, dz1)
-                    val endTopY = getTopUnblockedRadius(propagateRayBundleTemp(rayBundle, dz2), waistTopY)
-
-                    segments.add(
-                        BeamSegment(
-                            startZ = intermediateWaistZ,
-                            endZ = endZ,
-                            startTopY = waistTopY,
-                            startBottomY = -waistTopY,
-                            endTopY = endTopY,
-                            endBottomY = -endTopY,
-                            color = sourceColor
-                        )
-                    )
-
-                    propagateRayBundleInPlace(rayBundle, dz2)
-                    lastWaistZMm = intermediateWaistZ
-                } else {
-                    val endTopY = getTopUnblockedRadius(propagateRayBundleTemp(rayBundle, dz), startTopY)
-                    segments.add(
-                        BeamSegment(
-                            startZ = currentZ,
-                            endZ = endZ,
-                            startTopY = startTopY,
-                            startBottomY = -startTopY,
-                            endTopY = endTopY,
-                            endBottomY = -endTopY,
-                            color = sourceColor
-                        )
-                    )
-                    propagateRayBundleInPlace(rayBundle, dz)
-                }
+                )
             }
         }
 
@@ -491,24 +447,6 @@ object AnalyticalOpticsEngine {
         }
     }
 
-    private fun propagateRayBundleTemp(bundle: List<OpticalRay>, dz: Double): List<OpticalRay> {
-        return bundle.map {
-            if (it.isBlocked) it.copy() else OpticalRay(it.y + it.u * dz, it.u, it.y0, false)
-        }
-    }
-
-    private fun findWaistZBetween(bundle: List<OpticalRay>, startZ: Double, endZ: Double): Double? {
-        val unblocked = bundle.filter { !it.isBlocked }
-        // Prefer axial rays (originating from center of source y0=0) to calculate paraxial focus
-        val axialRays = unblocked.filter { abs(it.y0) < 1e-5 }
-        val candidateRays = if (axialRays.isNotEmpty()) axialRays else unblocked
-
-        val convergingRay = candidateRays.firstOrNull { it.y > 0 && it.u < 0 } ?: return null
-        val dzWaist = -convergingRay.y / convergingRay.u
-        val waistZ = startZ + dzWaist
-        return if (waistZ > (startZ + 1e-3) && waistZ < (endZ - 1e-3)) waistZ else null
-    }
-
     private fun calculateSystemFocalZ(elements: List<OpticalElement>): Double? {
         var parallelRayY = 1.0
         var parallelRayU = 0.0
@@ -519,12 +457,11 @@ object AnalyticalOpticsEngine {
         }
         if (lensElements.isEmpty()) return null
 
-        for (elem in lensElements) {
-            val dz = elem.positionZMm - currentZ
+        for ((_, _, _, positionZMm, _, f) in lensElements) {
+            val dz = positionZMm - currentZ
             parallelRayY += parallelRayU * dz
-            currentZ = elem.positionZMm
+            currentZ = positionZMm
 
-            val f = elem.focalLengthMm
             if (f != 0.0) {
                 parallelRayU -= parallelRayY / f
             }
@@ -552,15 +489,14 @@ object AnalyticalOpticsEngine {
         elements: List<OpticalElement>
     ): Double {
         var totalLsa = 0.0
-        for (lens in elements) {
-            if (lens.type == OpticalElementType.APERTURE_STOP || lens.type == OpticalElementType.DETECTOR) continue
-            val f = lens.focalLengthMm
+        for ((_, _, type, _, clearApertureMm, f, _, material) in elements) {
+            if (type == OpticalElementType.APERTURE_STOP || type == OpticalElementType.DETECTOR) continue
             if (f == 0.0) continue
 
-            val nd = lens.material.nd
-            val yIn = lens.clearApertureMm / 2.0
+            val nd = material.nd
+            val yIn = clearApertureMm / 2.0
 
-            val shapeFactor = when (lens.type) {
+            val shapeFactor = when (type) {
                 OpticalElementType.PLANO_CONVEX -> 0.25
                 OpticalElementType.ACHROMATIC_DOUBLET -> 0.08
                 OpticalElementType.BICONVEX -> 0.35

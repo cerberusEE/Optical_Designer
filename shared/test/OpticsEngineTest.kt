@@ -1,5 +1,4 @@
-package com.example.optical_designer
-
+import androidx.compose.ui.graphics.Color
 import com.example.optical_designer.engine.AnalyticalOpticsEngine
 import com.example.optical_designer.engine.OpticalPresets
 import com.example.optical_designer.model.GlassMaterial
@@ -7,26 +6,28 @@ import com.example.optical_designer.model.LightSource
 import com.example.optical_designer.model.OpticalElement
 import com.example.optical_designer.model.OpticalElementType
 import com.example.optical_designer.model.SourceType
+import com.example.optical_designer.model.Wavelength
 import kotlin.math.abs
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class OpticsEngineTest {
 
     @Test
-    fun `test default LED collimator efficiency is 27 percent with physical lens thickness`() {
+    fun `test default LED collimator efficiency with planar front surface at Z=50mm`() {
         val preset = OpticalPresets.LED_COLLIMATOR
         val result = AnalyticalOpticsEngine.calculateSystem(preset.source, preset.elements)
 
-        // Lens front surface at z = 47mm (Z=50mm - thickness/2).
-        // Beam radius at front surface = 0.5mm + 47mm * tan(30°) ≈ 27.64mm.
-        // Area collection efficiency = (15mm / 27.64mm)^2 ≈ 29.46%
-        // Fresnel transmission (N-BK7, R = 4% x 2 surfaces) = 92%
-        // Net efficiency = 29.46% * 92% ≈ 27.1%
-        val expectedEfficiencyPct = 27.1
+        // Plano-convex lens flat front surface at z = 50mm.
+        // Beam radius at flat surface = 0.5mm + 50mm * tan(30°) ≈ 29.37mm.
+        // Area collection efficiency = (15mm / 29.37mm)^2 ≈ 26.09%
+        // Fresnel & internal transmission (N-BK7) ≈ 91.26%
+        // Net efficiency = 26.09% * 91.26% ≈ 23.8%
+        val expectedEfficiencyPct = 23.8
         assertTrue(
             abs(result.opticalEfficiencyPct - expectedEfficiencyPct) < 1.0,
-            "Default setup efficiency should be ~27.1%, but was ${result.opticalEfficiencyPct}%"
+            "Default setup efficiency should be ~23.8%, but was ${result.opticalEfficiencyPct}%"
         )
     }
 
@@ -256,9 +257,9 @@ class OpticsEngineTest {
 
     @Test
     fun `test CIE 1931 color matching for visible spectrum wavelengths`() {
-        val greenCol = com.example.optical_designer.model.Wavelength(520.0).toColor(isDarkTheme = true)
-        val redCol = com.example.optical_designer.model.Wavelength(650.0).toColor(isDarkTheme = true)
-        val blueCol = com.example.optical_designer.model.Wavelength(450.0).toColor(isDarkTheme = true)
+        val greenCol = Wavelength(520.0).toColor(isDarkTheme = true)
+        val redCol = Wavelength(650.0).toColor(isDarkTheme = true)
+        val blueCol = Wavelength(450.0).toColor(isDarkTheme = true)
 
         assertTrue(greenCol.green > greenCol.red && greenCol.green > greenCol.blue, "520nm should be predominantly green")
         assertTrue(redCol.red > redCol.green && redCol.red > redCol.blue, "650nm should be predominantly red")
@@ -267,19 +268,23 @@ class OpticsEngineTest {
 
     @Test
     fun `test non-visible wavelengths produce neutral gray in dark and light themes`() {
-        val uvDarkCol = com.example.optical_designer.model.Wavelength(250.0).toColor(isDarkTheme = true)
-        val lwirDarkCol = com.example.optical_designer.model.Wavelength(10600.0).toColor(isDarkTheme = true)
+        val uvDarkCol = Wavelength(250.0).toColor(isDarkTheme = true)
+        val lwirDarkCol = Wavelength(10600.0).toColor(isDarkTheme = true)
 
-        val uvLightCol = com.example.optical_designer.model.Wavelength(250.0).toColor(isDarkTheme = false)
-        val lwirLightCol = com.example.optical_designer.model.Wavelength(10600.0).toColor(isDarkTheme = false)
+        val uvLightCol = Wavelength(250.0).toColor(isDarkTheme = false)
+        val lwirLightCol = Wavelength(10600.0).toColor(isDarkTheme = false)
 
         // UV and LWIR in dark theme produce light neutral gray (0xFFB0BEC5)
-        assertTrue(uvDarkCol == androidx.compose.ui.graphics.Color(0xFFB0BEC5), "UV in dark theme should be light gray")
-        assertTrue(lwirDarkCol == androidx.compose.ui.graphics.Color(0xFFB0BEC5), "LWIR in dark theme should be light gray")
+        assertEquals(uvDarkCol, Color(0xFFB0BEC5), "UV in dark theme should be light gray")
+        assertEquals(lwirDarkCol, Color(0xFFB0BEC5), "LWIR in dark theme should be light gray")
 
         // UV and LWIR in light theme produce medium-dark neutral gray (0xFF546E7A)
-        assertTrue(uvLightCol == androidx.compose.ui.graphics.Color(0xFF546E7A), "UV in light theme should be medium-dark gray")
-        assertTrue(lwirLightCol == androidx.compose.ui.graphics.Color(0xFF546E7A), "LWIR in light theme should be medium-dark gray")
+        assertEquals(uvLightCol, Color(0xFF546E7A), "UV in light theme should be medium-dark gray")
+        assertEquals(
+            lwirLightCol,
+            Color(0xFF546E7A),
+            "LWIR in light theme should be medium-dark gray"
+        )
     }
 
     @Test
@@ -463,6 +468,105 @@ class OpticsEngineTest {
         assertTrue(
             resultWithIris.opticalEfficiencyPct < resultWithoutIris.opticalEfficiencyPct,
             "Cascading iris stop should clip light and reduce net efficiency (${resultWithIris.opticalEfficiencyPct}% < ${resultWithoutIris.opticalEfficiencyPct}%)"
+        )
+    }
+
+    @Test
+    fun `test planoconvex lens planar side is at specified Z position and focal length measured from flat side`() {
+        val source = LightSource(
+            name = "Point Source",
+            sourceType = SourceType.POINT_SOURCE,
+            cwlNm = 520.0,
+            divergenceYDeg = 0.0, // Parallel beam
+            emitterHeightMm = 2.0,
+            positionZMm = 0.0
+        )
+        val lensPositionZ = 60.0
+        val focalLength = 50.0
+        val pcLens = OpticalElement(
+            id = "pc_lens",
+            name = "Plano-Convex Lens",
+            type = OpticalElementType.PLANO_CONVEX,
+            positionZMm = lensPositionZ,
+            clearApertureMm = 30.0,
+            focalLengthMm = focalLength
+        )
+
+        val result = AnalyticalOpticsEngine.calculateSystem(source, listOf(pcLens))
+
+        // First segment is free-space propagation from source (Z=0) to flat side (Z=lensPositionZ)
+        val firstSegment = result.beamSegments.first()
+        assertTrue(
+            abs(firstSegment.endZ - lensPositionZ) < 1e-4,
+            "Plano-convex planar front face must be at specified position Z=$lensPositionZ mm"
+        )
+
+        // For parallel light entering the flat side at Z=lensPositionZ, focal point is at Z = lensPositionZ + focalLength
+        val expectedFocusZ = lensPositionZ + focalLength
+        assertTrue(
+            abs(result.focalDistanceMm - expectedFocusZ) < 1e-4,
+            "Focal point for plano-convex lens must be at Z=$expectedFocusZ mm (f=$focalLength mm measured from flat side)"
+        )
+    }
+
+    @Test
+    fun `test free space beam segment has straight sides without intermediate slope splits outside lenses`() {
+        val source = LightSource(
+            name = "LED Source",
+            sourceType = SourceType.LED,
+            cwlNm = 520.0,
+            divergenceYDeg = 40.0,
+            emitterHeightMm = 1.0,
+            positionZMm = 0.0
+        )
+        val lens1 = OpticalElement(
+            id = "l1", name = "Lens L1", type = OpticalElementType.PLANO_CONVEX,
+            positionZMm = 10.0, clearApertureMm = 30.0, focalLengthMm = 15.0
+        )
+        val lens2 = OpticalElement(
+            id = "l2", name = "Lens L2", type = OpticalElementType.BICONVEX,
+            positionZMm = 60.0, clearApertureMm = 40.0, focalLengthMm = 50.0
+        )
+
+        val result = AnalyticalOpticsEngine.calculateSystem(source, listOf(lens1, lens2))
+
+        val l1RearZ = lens1.positionZMm + lens1.thicknessMm
+        val l2FrontZ = lens2.positionZMm - lens2.thicknessMm / 2.0
+
+        val interLensSegment = result.beamSegments.firstOrNull {
+            abs(it.startZ - l1RearZ) < 1e-3 && abs(it.endZ - l2FrontZ) < 1e-3
+        }
+
+        assertTrue(
+            interLensSegment != null,
+            "Free-space between Lens 1 and Lens 2 must be a single continuous straight polygon from Z=$l1RearZ to Z=$l2FrontZ without intermediate slope changes"
+        )
+    }
+
+    @Test
+    fun `test spillover light clipping starts new polygon at lens clear aperture`() {
+        val source = LightSource(
+            name = "LED Source",
+            sourceType = SourceType.LED,
+            cwlNm = 520.0,
+            divergenceYDeg = 60.0,
+            emitterHeightMm = 1.0,
+            positionZMm = 0.0
+        )
+        val lens = OpticalElement(
+            id = "l1", name = "Small Lens", type = OpticalElementType.PLANO_CONVEX,
+            positionZMm = 50.0, clearApertureMm = 20.0, focalLengthMm = 50.0
+        )
+
+        val result = AnalyticalOpticsEngine.calculateSystem(source, listOf(lens))
+
+        val preLensSeg = result.beamSegments.first { abs(it.endZ - 50.0) < 1e-3 }
+        assertTrue(preLensSeg.endTopY > 10.0, "Arriving beam radius before Lens 1 should exceed aperture radius (10mm)")
+
+        val lensSeg = result.beamSegments.first { abs(it.startZ - 50.0) < 1e-3 }
+        assertTrue(
+            abs(lensSeg.startTopY - 10.0) < 1e-3,
+            "Polygon inside Lens 1 must start at clipped aperture radius (10mm), omitting spillover light"
         )
     }
 }

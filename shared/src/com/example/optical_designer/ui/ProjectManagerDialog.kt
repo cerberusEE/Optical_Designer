@@ -190,11 +190,6 @@ fun ProjectManagerDialog(
                                 statusMessage = "Loaded project '${proj.name}'"
                                 onDismissRequest()
                             },
-                            onSaveOver = { proj ->
-                                onSaveProject()
-                                refreshSavedList()
-                                statusMessage = "Saved over '${proj.name}'"
-                            },
                             onDelete = { projId ->
                                 ProjectRepository.deleteProjectFromLibrary(projId)
                                 refreshSavedList()
@@ -224,7 +219,6 @@ private fun SavedProjectsTab(
     savedProjects: List<OpticalProject>,
     currentProjectId: String,
     onLoad: (OpticalProject) -> Unit,
-    onSaveOver: (OpticalProject) -> Unit,
     onDelete: (String) -> Unit,
     onNewProject: () -> Unit
 ) {

@@ -441,7 +441,7 @@ fun AnalysisView(
 
                     Spacer(modifier = Modifier.height(6.dp))
 
-                    for (elem in elements.filter { it.enabled }) {
+                    for ((_, name, type, positionZMm, clearApertureMm, focalLengthMm) in elements.filter { it.enabled }) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -449,15 +449,19 @@ fun AnalysisView(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = "@ Z=${NumberFormatUtil.formatToDisplay(elem.positionZMm / 1000.0, 3)}m: ${elem.name}",
+                                text = "@ Z=${NumberFormatUtil.formatToDisplay(positionZMm / 1000.0, 3)}m: $name",
                                 style = MaterialTheme.typography.bodySmall,
                                 modifier = Modifier.weight(1.5f)
                             )
                             Text(
-                                text = if (elem.type == OpticalElementType.DETECTOR) {
-                                    "Detector Screen | Ø${NumberFormatUtil.formatToDisplay(elem.clearApertureMm)}mm"
+                                text = if (type == OpticalElementType.DETECTOR) {
+                                    "Detector Screen | Ø${NumberFormatUtil.formatToDisplay(
+                                        clearApertureMm
+                                    )}mm"
                                 } else {
-                                    "f=${NumberFormatUtil.formatToDisplay(elem.focalLengthMm)}mm | Ø${NumberFormatUtil.formatToDisplay(elem.clearApertureMm)}mm"
+                                    "f=${NumberFormatUtil.formatToDisplay(focalLengthMm)}mm | Ø${NumberFormatUtil.formatToDisplay(
+                                        clearApertureMm
+                                    )}mm"
                                 },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.primary,

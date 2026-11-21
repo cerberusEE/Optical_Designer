@@ -2,26 +2,40 @@ package com.example.optical_designer.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -34,6 +48,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -43,6 +58,8 @@ import com.example.optical_designer.model.OpticalElement
 import com.example.optical_designer.model.OpticalElementType
 import com.example.optical_designer.model.Wavelength
 import com.example.optical_designer.util.NumberFormatUtil
+import kotlinx.coroutines.isActive
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
@@ -52,11 +69,50 @@ fun RayTraceView(
     source: LightSource,
     elements: List<OpticalElement>,
     opticsResult: AnalyticalOpticsResult,
+    onElementsChange: (List<OpticalElement>) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var scale by remember { mutableStateOf(2.5f) } // Pixels per mm
     var offsetX by remember { mutableStateOf(80f) }
     var offsetY by remember { mutableStateOf(0f) }
+
+    var selectedElementId by remember { mutableStateOf<String?>(null) }
+    var sliderPosition by remember { mutableFloatStateOf(0f) }
+
+    val selectedElement = elements.firstOrNull { it.id == selectedElementId }
+
+    val currentSliderPosition by rememberUpdatedState(sliderPosition)
+    val currentElements by rememberUpdatedState(elements)
+    val currentOnElementsChange by rememberUpdatedState(onElementsChange)
+
+    // Frame-precise continuous velocity nudge animation loop
+    LaunchedEffect(selectedElementId, sliderPosition != 0f) {
+        if (selectedElementId != null && sliderPosition != 0f) {
+            var lastTimeNanos = withFrameNanos { it }
+            while (isActive) {
+                withFrameNanos { frameTimeNanos ->
+                    val dtSec = (frameTimeNanos - lastTimeNanos) / 1_000_000_000.0
+                    lastTimeNanos = frameTimeNanos
+
+                    val pos = currentSliderPosition
+                    if (pos != 0f) {
+                        val speedMmPerSec = pos.toDouble() * 10.0
+                        val deltaZ = speedMmPerSec * dtSec
+
+                        val elemList = currentElements
+                        val currentElem = elemList.firstOrNull { it.id == selectedElementId }
+                        if (currentElem != null && abs(deltaZ) > 1e-6) {
+                            val newZ = max(0.0, currentElem.positionZMm + deltaZ)
+                            val updated = elemList.map {
+                                if (it.id == selectedElementId) it.copy(positionZMm = newZ) else it
+                            }
+                            currentOnElementsChange(updated)
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     val textMeasurer = rememberTextMeasurer()
     val isDarkTheme = isSystemInDarkTheme()
@@ -132,12 +188,43 @@ fun RayTraceView(
             }
         }
 
-        // --- Canvas Container with Zoom Controls ---
+        // --- Canvas Container with Zoom & Tap Selection Gestures ---
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
                 .background(canvasBg)
+                .pointerInput(elements, scale, offsetX, offsetY) {
+                    detectTapGestures { tapOffset ->
+                        val canvasHeight = size.height
+                        val centerY = canvasHeight / 2f + offsetY
+
+                        var hitElem: OpticalElement? = null
+                        for (elem in elements.filter { it.enabled }) {
+                            val zX = offsetX + elem.positionZMm.toFloat() * scale
+                            val apertureHalf = (elem.clearApertureMm.toFloat() / 2f) * scale
+                            val thickness = (elem.thicknessMm.toFloat() * scale).coerceAtLeast(6f)
+
+                            val leftZ = if (elem.type == OpticalElementType.PLANO_CONVEX) zX else zX - thickness / 2f
+                            val rightZ = leftZ + thickness
+
+                            val touchPadding = 20f
+                            if (tapOffset.x in (leftZ - touchPadding)..(rightZ + touchPadding) &&
+                                tapOffset.y in (centerY - apertureHalf - touchPadding)..(centerY + apertureHalf + touchPadding)
+                            ) {
+                                hitElem = elem
+                                break
+                            }
+                        }
+
+                        if (hitElem != null) {
+                            selectedElementId = hitElem.id
+                        } else {
+                            selectedElementId = null
+                            sliderPosition = 0f
+                        }
+                    }
+                }
                 .pointerInput(Unit) {
                     detectTransformGestures { _, pan, zoom, _ ->
                         scale = (scale * zoom).coerceIn(0.0000001f, 1000f)
@@ -196,13 +283,13 @@ fun RayTraceView(
                 }
 
                 // 2. Render Solid Semi-transparent Emitted Light Beam Surface
-                for (seg in opticsResult.beamSegments) {
-                    val x1 = offsetX + seg.startZ.toFloat() * scale
-                    val x2 = offsetX + seg.endZ.toFloat() * scale
-                    val yTop1 = centerY - seg.startTopY.toFloat() * scale
-                    val yBottom1 = centerY - seg.startBottomY.toFloat() * scale
-                    val yTop2 = centerY - seg.endTopY.toFloat() * scale
-                    val yBottom2 = centerY - seg.endBottomY.toFloat() * scale
+                for ((startZ, endZ, startTopY, startBottomY, endTopY, endBottomY) in opticsResult.beamSegments) {
+                    val x1 = offsetX + startZ.toFloat() * scale
+                    val x2 = offsetX + endZ.toFloat() * scale
+                    val yTop1 = centerY - startTopY.toFloat() * scale
+                    val yBottom1 = centerY - startBottomY.toFloat() * scale
+                    val yTop2 = centerY - endTopY.toFloat() * scale
+                    val yBottom2 = centerY - endBottomY.toFloat() * scale
 
                     val beamPath = Path().apply {
                         moveTo(x1, yTop1)
@@ -235,7 +322,8 @@ fun RayTraceView(
 
                 // 3. Render Optical Elements
                 for (elem in elements.filter { it.enabled }) {
-                    drawOpticalElement(elem, offsetX, centerY, scale, isDarkTheme)
+                    val isSelected = elem.id == selectedElementId
+                    drawOpticalElement(elem, offsetX, centerY, scale, isDarkTheme, isSelected)
                 }
 
                 // 4. Render Light Source Symbol
@@ -255,6 +343,38 @@ fun RayTraceView(
                     style = TextStyle(color = sourceSymbolColor, fontSize = 11.sp),
                     topLeft = Offset(sourceX - 25f, centerY - max(8f, emitHalfH) - 20f)
                 )
+            }
+
+            // --- Top-Left Quick Element Selection Chips Overlay ---
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(8.dp)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Optics:",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (isDarkTheme) Color.LightGray else Color.DarkGray
+                )
+                for ((id, name, _, positionZMm) in elements.filter { it.enabled }) {
+                    val isSel = id == selectedElementId
+                    FilterChip(
+                        selected = isSel,
+                        onClick = {
+                            selectedElementId = if (isSel) null else id
+                            sliderPosition = 0f
+                        },
+                        label = {
+                            Text(
+                                text = "$name (${NumberFormatUtil.formatToDisplay(positionZMm)}mm)",
+                                fontSize = 11.sp
+                            )
+                        }
+                    )
+                }
             }
 
             // --- Floating Canvas Controls ---
@@ -299,6 +419,131 @@ fun RayTraceView(
                     }
                 }
             }
+
+            // --- Bottom Velocity Nudge Control Panel (Shown when an optic is selected) ---
+            selectedElement?.let { elem ->
+                val cardBg = if (isDarkTheme) Color(0xFF1E293B).copy(alpha = 0.95f) else Color.White.copy(alpha = 0.95f)
+                Card(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 8.dp, start = 8.dp, end = 8.dp)
+                        .fillMaxWidth(0.95f),
+                    colors = CardDefaults.cardColors(containerColor = cardBg),
+                    shape = RoundedCornerShape(12.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        // Card Header: Element Name and Position
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (elem.type != OpticalElementType.DETECTOR && elem.type != OpticalElementType.APERTURE_STOP) {
+                                    "${elem.name} (f=${NumberFormatUtil.formatToDisplay(elem.focalLengthMm)}mm) • Z = ${NumberFormatUtil.formatToDisplay(elem.positionZMm, 2)} mm"
+                                } else {
+                                    "${elem.name} • Z = ${NumberFormatUtil.formatToDisplay(elem.positionZMm, 2)} mm"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(2.dp))
+
+                        // Velocity Slider: Slide left (negative velocity) or right (positive velocity). Snaps to 0 when released.
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "◀ Left",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 11.sp
+                            )
+
+                            Slider(
+                                value = sliderPosition,
+                                onValueChange = { sliderPosition = it },
+                                onValueChangeFinished = { sliderPosition = 0f },
+                                valueRange = -1f..1f,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(horizontal = 8.dp)
+                            )
+
+                            Text(
+                                text = "Right ▶",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 11.sp
+                            )
+                        }
+
+                        // Velocity status feedback label (-10 mm/s to +10 mm/s)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "-10 mm/s",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
+                            Text(
+                                text = if (sliderPosition != 0f) {
+                                    "Velocity: ${NumberFormatUtil.formatToDisplay(sliderPosition * 10.0, 1)} mm/s"
+                                } else {
+                                    "Hold slider left/right to move • Snap 0 mm/s (Stopped)"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (sliderPosition != 0f) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "+10 mm/s",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        // Quick Fine Nudge Step Buttons (-5mm, -1mm, -0.1mm, +0.1mm, +1mm, +5mm)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val stepDeltas = listOf(-5.0, -1.0, -0.1, 0.1, 1.0, 5.0)
+                            for (delta in stepDeltas) {
+                                OutlinedButton(
+                                    onClick = {
+                                        val newZ = max(0.0, elem.positionZMm + delta)
+                                        val updated = elements.map {
+                                            if (it.id == elem.id) it.copy(positionZMm = newZ) else it
+                                        }
+                                        onElementsChange(updated)
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(28.dp)
+                                ) {
+                                    Text(
+                                        text = if (delta > 0) "+${NumberFormatUtil.formatToDisplay(delta)}mm" else "${NumberFormatUtil.formatToDisplay(delta)}mm",
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -308,11 +553,31 @@ private fun DrawScope.drawOpticalElement(
     offsetX: Float,
     centerY: Float,
     scale: Float,
-    isDarkTheme: Boolean = true
+    isDarkTheme: Boolean = true,
+    isSelected: Boolean = false
 ) {
     val zX = offsetX + elem.positionZMm.toFloat() * scale
     val apertureHalf = (elem.clearApertureMm.toFloat() / 2f) * scale
     val thickness = (elem.thicknessMm.toFloat() * scale).coerceAtLeast(6f)
+
+    if (isSelected) {
+        val pad = 6f
+        val leftBound = if (elem.type == OpticalElementType.PLANO_CONVEX) zX - pad else zX - thickness / 2f - pad
+        val rightBound = if (elem.type == OpticalElementType.PLANO_CONVEX) zX + thickness + pad else zX + thickness / 2f + pad
+        val topBound = centerY - apertureHalf - pad
+        val bottomBound = centerY + apertureHalf + pad
+
+        val highlightColor = Color(0xFFFFD54F) // Bright yellow selection glow
+        drawRect(
+            color = highlightColor,
+            topLeft = Offset(leftBound, topBound),
+            size = Size(rightBound - leftBound, bottomBound - topBound),
+            style = Stroke(
+                width = 3f,
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f), 0f)
+            )
+        )
+    }
 
     val glassFillColor = if (isDarkTheme) Color(0x5581D4FA) else Color(0x330288D1)
     val glassStrokeColor = if (isDarkTheme) Color(0xFF4FC3F7) else Color(0xFF0288D1)
@@ -320,13 +585,12 @@ private fun DrawScope.drawOpticalElement(
     when (elem.type) {
         OpticalElementType.PLANO_CONVEX -> {
             val path = Path()
-            val leftFlatZ = zX - thickness / 2f
-            val rightApexZ = zX + thickness / 2f
-            val edgeZ = (leftFlatZ + 2f).coerceAtMost(rightApexZ - 1f)
+            val rightApexZ = zX + thickness
+            val edgeZ = (zX + 2f).coerceAtMost(rightApexZ - 1f)
 
-            // Flat front surface facing divergent beam (left), convex back surface facing right
-            path.moveTo(leftFlatZ, centerY - apertureHalf)
-            path.lineTo(leftFlatZ, centerY + apertureHalf)
+            // Flat front surface at zX (positionZMm facing incoming beam), convex back surface facing right
+            path.moveTo(zX, centerY - apertureHalf)
+            path.lineTo(zX, centerY + apertureHalf)
             path.lineTo(edgeZ, centerY + apertureHalf)
             path.quadraticTo(
                 rightApexZ, centerY,
@@ -361,19 +625,18 @@ private fun DrawScope.drawOpticalElement(
         OpticalElementType.ACHROMATIC_DOUBLET -> {
             val leftZ = zX - thickness / 2f
             val rightZ = zX + thickness / 2f
-            val midZ = zX
 
             val crownPath = Path().apply {
                 moveTo(leftZ, centerY - apertureHalf)
                 lineTo(leftZ, centerY + apertureHalf)
-                lineTo(midZ, centerY + apertureHalf)
-                quadraticTo(midZ + thickness / 4f, centerY, midZ, centerY - apertureHalf)
+                lineTo(zX, centerY + apertureHalf)
+                quadraticTo(zX + thickness / 4f, centerY, zX, centerY - apertureHalf)
                 close()
             }
 
             val flintPath = Path().apply {
-                moveTo(midZ, centerY - apertureHalf)
-                quadraticTo(midZ + thickness / 4f, centerY, midZ, centerY + apertureHalf)
+                moveTo(zX, centerY - apertureHalf)
+                quadraticTo(zX + thickness / 4f, centerY, zX, centerY + apertureHalf)
                 lineTo(rightZ, centerY + apertureHalf)
                 quadraticTo(rightZ - thickness / 3f, centerY, rightZ, centerY - apertureHalf)
                 close()

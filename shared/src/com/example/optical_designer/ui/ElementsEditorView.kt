@@ -103,7 +103,6 @@ fun ScientificNumberTextField(
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ElementsEditorView(
     source: LightSource,

@@ -25,7 +25,7 @@ data class Wavelength(
 
         // Outside visible spectrum (vacuum UV < 400 nm or NIR/MWIR/LWIR > 700 nm):
         // Return light gray for dark theme, or neutral medium-dark gray for light theme
-        if (wl < 400.0 || wl > 700.0) {
+        if (wl !in 400.0..700.0) {
             return if (isDarkTheme) Color(0xFFB0BEC5) else Color(0xFF546E7A)
         }
 
@@ -99,7 +99,6 @@ data class GlassMaterial(
     val internalTransmissionPct: Double = 99.0 // Internal transmittance percentage
 ) {
     companion object {
-        val AIR = GlassMaterial("Air", nd = 1.0, vd = 0.0, surfaceReflectance = 0.0, internalTransmissionPct = 100.0)
         val N_BK7 = GlassMaterial("N-BK7 (Crown)", nd = 1.5168, vd = 64.17, surfaceReflectance = 0.04, internalTransmissionPct = 99.2)
         val FUSED_SILICA = GlassMaterial("Fused Silica (Quartz)", nd = 1.4585, vd = 67.8, surfaceReflectance = 0.035, internalTransmissionPct = 99.5)
         val GERMANIUM = GlassMaterial("Germanium (Ge)", nd = 4.0028, vd = 100.0, surfaceReflectance = 0.36, internalTransmissionPct = 95.0)
