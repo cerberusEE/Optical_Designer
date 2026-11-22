@@ -144,26 +144,14 @@ object AnalyticalOpticsEngine {
 
             // 1. Free-space propagation to element front boundary
             if (zTarget > currentZ) {
-                val dz = zTarget - currentZ
-
-                val startTopY = getTopUnblockedRadius(rayBundle, emitterHalfHeight + currentZ * initialSlope)
-                val startBottomY = -startTopY
-
-                propagateRayBundleInPlace(rayBundle, dz)
-                val arrivingTopY = getTopUnblockedRadius(rayBundle, startTopY)
-
-                segments.add(
-                    BeamSegment(
-                        startZ = currentZ,
-                        endZ = zTarget,
-                        startTopY = startTopY,
-                        startBottomY = startBottomY,
-                        endTopY = arrivingTopY,
-                        endBottomY = -arrivingTopY,
-                        color = sourceColor
-                    )
+                propagateFreeSpace(
+                    rayBundle = rayBundle,
+                    startZ = currentZ,
+                    endZ = zTarget,
+                    sourceColor = sourceColor,
+                    fallbackInitialRadius = emitterHalfHeight + currentZ * initialSlope,
+                    segments = segments
                 )
-
                 currentZ = zTarget
             }
 
@@ -323,22 +311,13 @@ object AnalyticalOpticsEngine {
             val endZ = targetZBound + maxOf(60.0, targetZBound * 0.1)
 
             if (endZ > currentZ) {
-                val dz = endZ - currentZ
-                val startTopY = getTopUnblockedRadius(rayBundle, 0.1)
-
-                propagateRayBundleInPlace(rayBundle, dz)
-                val endTopY = getTopUnblockedRadius(rayBundle, startTopY)
-
-                segments.add(
-                    BeamSegment(
-                        startZ = currentZ,
-                        endZ = endZ,
-                        startTopY = startTopY,
-                        startBottomY = -startTopY,
-                        endTopY = endTopY,
-                        endBottomY = -endTopY,
-                        color = sourceColor
-                    )
+                propagateFreeSpace(
+                    rayBundle = rayBundle,
+                    startZ = currentZ,
+                    endZ = endZ,
+                    sourceColor = sourceColor,
+                    fallbackInitialRadius = 0.1,
+                    segments = segments
                 )
             }
         }
@@ -445,6 +424,89 @@ object AnalyticalOpticsEngine {
                 ray.y += ray.u * dz
             }
         }
+    }
+
+    private fun propagateFreeSpace(
+        rayBundle: List<OpticalRay>,
+        startZ: Double,
+        endZ: Double,
+        sourceColor: Color,
+        fallbackInitialRadius: Double,
+        segments: MutableList<BeamSegment>
+    ) {
+        if (endZ <= startZ) return
+
+        val unblocked = rayBundle.filter { !it.isBlocked }
+        if (unblocked.isEmpty()) {
+            val r1 = getTopUnblockedRadius(rayBundle, fallbackInitialRadius)
+            val dz = endZ - startZ
+            propagateRayBundleInPlace(rayBundle, dz)
+            val r2 = getTopUnblockedRadius(rayBundle, r1)
+            segments.add(
+                BeamSegment(
+                    startZ = startZ,
+                    endZ = endZ,
+                    startTopY = r1,
+                    startBottomY = -r1,
+                    endTopY = r2,
+                    endBottomY = -r2,
+                    color = sourceColor
+                )
+            )
+            return
+        }
+
+        val totalDz = endZ - startZ
+        val numSteps = maxOf(10, (totalDz / 5.0).toInt().coerceAtMost(100))
+        val stepDz = totalDz / numSteps.toDouble()
+
+        val zPoints = DoubleArray(numSteps + 1)
+        val rPoints = DoubleArray(numSteps + 1)
+
+        var curZ = startZ
+        zPoints[0] = curZ
+        rPoints[0] = getTopUnblockedRadius(rayBundle, fallbackInitialRadius)
+
+        for (step in 1..numSteps) {
+            propagateRayBundleInPlace(rayBundle, stepDz)
+            curZ += stepDz
+            zPoints[step] = curZ
+            rPoints[step] = getTopUnblockedRadius(rayBundle, rPoints[step - 1])
+        }
+        zPoints[numSteps] = endZ
+
+        var segStartIdx = 0
+        for (i in 1 until numSteps) {
+            val prevSlope = (rPoints[i] - rPoints[segStartIdx]) / (zPoints[i] - zPoints[segStartIdx])
+            val nextSlope = (rPoints[i + 1] - rPoints[i]) / (zPoints[i + 1] - zPoints[i])
+
+            if (abs(nextSlope - prevSlope) > 1e-4) {
+                segments.add(
+                    BeamSegment(
+                        startZ = zPoints[segStartIdx],
+                        endZ = zPoints[i],
+                        startTopY = rPoints[segStartIdx],
+                        startBottomY = -rPoints[segStartIdx],
+                        endTopY = rPoints[i],
+                        endBottomY = -rPoints[i],
+                        color = sourceColor
+                    )
+                )
+                segStartIdx = i
+            }
+        }
+
+        segments.add(
+            BeamSegment(
+                startZ = zPoints[segStartIdx],
+                endZ = zPoints[numSteps],
+                startTopY = rPoints[segStartIdx],
+                startBottomY = -rPoints[segStartIdx],
+                endTopY = rPoints[numSteps],
+                endBottomY = -rPoints[numSteps],
+                color = sourceColor
+            )
+        )
     }
 
     private fun calculateSystemFocalZ(elements: List<OpticalElement>): Double? {

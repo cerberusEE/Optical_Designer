@@ -569,4 +569,54 @@ class OpticsEngineTest {
             "Polygon inside Lens 1 must start at clipped aperture radius (10mm), omitting spillover light"
         )
     }
+
+    @Test
+    fun `test moving downstream lens does not alter divergence or beam profile of upstream lens`() {
+        val source = LightSource(
+            name = "LED Source",
+            sourceType = SourceType.LED,
+            cwlNm = 520.0,
+            divergenceYDeg = 40.0,
+            emitterHeightMm = 1.0,
+            positionZMm = 0.0
+        )
+        val lens1 = OpticalElement(
+            id = "l1", name = "Lens 1", type = OpticalElementType.PLANO_CONVEX,
+            positionZMm = 50.0, clearApertureMm = 30.0, focalLengthMm = 50.0
+        )
+        val lens2Near = OpticalElement(
+            id = "l2", name = "Lens 2", type = OpticalElementType.BICONVEX,
+            positionZMm = 120.0, clearApertureMm = 40.0, focalLengthMm = 50.0
+        )
+        val lens2Far = lens2Near.copy(positionZMm = 200.0)
+
+        val resultNear = AnalyticalOpticsEngine.calculateSystem(source, listOf(lens1, lens2Near))
+        val resultFar = AnalyticalOpticsEngine.calculateSystem(source, listOf(lens1, lens2Far))
+
+        // First segment (source to Lens 1) must be identical
+        val firstSegNear = resultNear.beamSegments.first()
+        val firstSegFar = resultFar.beamSegments.first()
+
+        assertEquals(firstSegNear.startTopY, firstSegFar.startTopY, 1e-4)
+        assertEquals(firstSegNear.endTopY, firstSegFar.endTopY, 1e-4)
+
+        // Segment inside Lens 1 must be identical
+        val lens1SegNear = resultNear.beamSegments.first { abs(it.startZ - 50.0) < 1e-3 }
+        val lens1SegFar = resultFar.beamSegments.first { abs(it.startZ - 50.0) < 1e-3 }
+
+        assertEquals(lens1SegNear.startTopY, lens1SegFar.startTopY, 1e-4)
+        assertEquals(lens1SegNear.endTopY, lens1SegFar.endTopY, 1e-4)
+
+        // Slope of beam leaving Lens 1 must be identical
+        val l1ExitSegNear = resultNear.beamSegments.first { abs(it.startZ - (50.0 + lens1.thicknessMm)) < 1e-3 }
+        val l1ExitSegFar = resultFar.beamSegments.first { abs(it.startZ - (50.0 + lens1.thicknessMm)) < 1e-3 }
+
+        val slopeNear = (l1ExitSegNear.endTopY - l1ExitSegNear.startTopY) / (l1ExitSegNear.endZ - l1ExitSegNear.startZ)
+        val slopeFar = (l1ExitSegFar.endTopY - l1ExitSegFar.startTopY) / (l1ExitSegFar.endZ - l1ExitSegFar.startZ)
+
+        assertTrue(
+            abs(slopeNear - slopeFar) < 1e-4,
+            "Moving Lens 2 must NOT alter the divergence slope leaving Lens 1 (near slope $slopeNear == far slope $slopeFar)"
+        )
+    }
 }
