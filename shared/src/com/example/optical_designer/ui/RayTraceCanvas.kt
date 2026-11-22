@@ -585,15 +585,16 @@ private fun DrawScope.drawOpticalElement(
     when (elem.type) {
         OpticalElementType.PLANO_CONVEX -> {
             val path = Path()
-            val rightApexZ = zX + thickness
-            val edgeZ = (zX + 2f).coerceAtMost(rightApexZ - 1f)
+            val targetApexZ = zX + thickness
+            val edgeZ = (zX + 2f).coerceAtMost(targetApexZ - 1f)
+            val controlZ = 2f * targetApexZ - edgeZ
 
             // Flat front surface at zX (positionZMm facing incoming beam), convex back surface facing right
             path.moveTo(zX, centerY - apertureHalf)
             path.lineTo(zX, centerY + apertureHalf)
             path.lineTo(edgeZ, centerY + apertureHalf)
             path.quadraticTo(
-                rightApexZ, centerY,
+                controlZ, centerY,
                 edgeZ, centerY - apertureHalf
             )
             path.close()
@@ -604,16 +605,16 @@ private fun DrawScope.drawOpticalElement(
 
         OpticalElementType.BICONVEX -> {
             val path = Path()
-            val leftApexZ = zX - thickness / 2f
-            val rightApexZ = zX + thickness / 2f
+            val leftControlZ = zX - thickness
+            val rightControlZ = zX + thickness
 
             path.moveTo(zX, centerY - apertureHalf)
             path.quadraticTo(
-                leftApexZ, centerY,
+                leftControlZ, centerY,
                 zX, centerY + apertureHalf
             )
             path.quadraticTo(
-                rightApexZ, centerY,
+                rightControlZ, centerY,
                 zX, centerY - apertureHalf
             )
             path.close()
@@ -630,15 +631,15 @@ private fun DrawScope.drawOpticalElement(
                 moveTo(leftZ, centerY - apertureHalf)
                 lineTo(leftZ, centerY + apertureHalf)
                 lineTo(zX, centerY + apertureHalf)
-                quadraticTo(zX + thickness / 4f, centerY, zX, centerY - apertureHalf)
+                quadraticTo(zX + thickness / 2f, centerY, zX, centerY - apertureHalf)
                 close()
             }
 
             val flintPath = Path().apply {
                 moveTo(zX, centerY - apertureHalf)
-                quadraticTo(zX + thickness / 4f, centerY, zX, centerY + apertureHalf)
+                quadraticTo(zX + thickness / 2f, centerY, zX, centerY + apertureHalf)
                 lineTo(rightZ, centerY + apertureHalf)
-                quadraticTo(rightZ - thickness / 3f, centerY, rightZ, centerY - apertureHalf)
+                quadraticTo(rightZ - thickness / 1.5f, centerY, rightZ, centerY - apertureHalf)
                 close()
             }
 
@@ -656,11 +657,11 @@ private fun DrawScope.drawOpticalElement(
 
         OpticalElementType.PARABOLIC_MIRROR -> {
             val path = Path()
-            val leftZ = zX - thickness / 2f
+            val controlZ = zX - thickness
 
             path.moveTo(zX, centerY - apertureHalf)
             path.quadraticTo(
-                leftZ, centerY,
+                controlZ, centerY,
                 zX, centerY + apertureHalf
             )
 
