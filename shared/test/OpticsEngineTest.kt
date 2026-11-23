@@ -21,13 +21,13 @@ class OpticsEngineTest {
 
         // Plano-convex lens flat front surface at z = 50mm.
         // Beam radius at flat surface = 0.5mm + 50mm * tan(30°) ≈ 29.37mm.
-        // Area collection efficiency = (15mm / 29.37mm)^2 ≈ 26.09%
+        // Radiometric Lambertian collection efficiency ≈ 29.85%
         // Fresnel & internal transmission (N-BK7) ≈ 91.26%
-        // Net efficiency = 26.09% * 91.26% ≈ 23.8%
-        val expectedEfficiencyPct = 23.8
+        // Net efficiency = 29.85% * 91.26% ≈ 27.24%
+        val expectedEfficiencyPct = 27.24
         assertTrue(
             abs(result.opticalEfficiencyPct - expectedEfficiencyPct) < 1.0,
-            "Default setup efficiency should be ~23.8%, but was ${result.opticalEfficiencyPct}%"
+            "Default setup efficiency should be ~27.2%, but was ${result.opticalEfficiencyPct}%"
         )
     }
 
@@ -619,4 +619,97 @@ class OpticsEngineTest {
             "Moving Lens 2 must NOT alter the divergence slope leaving Lens 1 (near slope $slopeNear == far slope $slopeFar)"
         )
     }
+
+    @Test
+    fun `test detector power uses radiometric ray weighting rather than uniform radius squared scaling`() {
+        val source = LightSource(
+            name = "Gaussian Laser",
+            sourceType = SourceType.LASER_DIODE,
+            cwlNm = 650.0,
+            opticalPowerW = 1.0,
+            divergenceYDeg = 20.0,
+            emitterHeightMm = 0.5
+        )
+        val elements = listOf(
+            OpticalElement(
+                id = "det_1",
+                name = "Half-Size Detector",
+                type = OpticalElementType.DETECTOR,
+                positionZMm = 50.0,
+                clearApertureMm = 10.0 // Smaller than beam diameter
+            )
+        )
+
+        val result = AnalyticalOpticsEngine.calculateSystem(source, elements)
+        val detRes = result.detectorResult!!
+
+        // For a Gaussian profile, power encircled within half-radius is significantly higher
+        // than simple (0.5)^2 = 25% uniform area scaling.
+        assertTrue(
+            detRes.encircledPowerPct > 30.0,
+            "Gaussian encircled power fraction (${detRes.encircledPowerPct}%) should exceed uniform 25% area scaling"
+        )
+    }
+
+    @Test
+    fun `test aperture collection efficiency uses radiometric phase space ray weights`() {
+        val ledSource = LightSource(
+            name = "Lambertian LED",
+            sourceType = SourceType.LED,
+            cwlNm = 520.0,
+            opticalPowerW = 1.0,
+            divergenceYDeg = 60.0,
+            emitterHeightMm = 1.0
+        )
+        // Lens collecting inner angle
+        val elements = listOf(
+            OpticalElement(
+                id = "lens_1",
+                name = "Aperture Lens",
+                type = OpticalElementType.PLANO_CONVEX,
+                positionZMm = 50.0,
+                clearApertureMm = 30.0,
+                focalLengthMm = 50.0,
+                material = GlassMaterial(name = "Ideal", nd = 1.5, vd = 60.0, surfaceReflectance = 0.0)
+            )
+        )
+
+        val result = AnalyticalOpticsEngine.calculateSystem(ledSource, elements)
+
+        // Radiometric Lambertian collection efficiency for 30mm aperture at 50mm from 60° LED
+        // is ~29.85%, differing from crude uniform area ratio (15/29.37)^2 ≈ 26.09%.
+        assertTrue(
+            result.geometricCollectionPct in 28.0..32.0,
+            "Radiometric collection efficiency should be ~29.85%, was ${result.geometricCollectionPct}%"
+        )
+    }
+
+    @Test
+    fun `test output divergence is energy weighted and robust for Gaussian laser beams`() {
+        val laserSource = LightSource(
+            name = "Laser Diode",
+            sourceType = SourceType.LASER_DIODE,
+            cwlNm = 650.0,
+            divergenceYDeg = 12.0,
+            emitterHeightMm = 0.1,
+            positionZMm = 0.0
+        )
+        val collimatingLens = OpticalElement(
+            id = "lens_1",
+            name = "Collimator",
+            type = OpticalElementType.BICONVEX,
+            positionZMm = 30.0,
+            clearApertureMm = 20.0,
+            focalLengthMm = 30.0
+        )
+
+        val result = AnalyticalOpticsEngine.calculateSystem(laserSource, listOf(collimatingLens))
+
+        // Gaussian divergence formula (2 * RMS slope) should produce ~0.19°
+        assertTrue(
+            abs(result.outputDivergenceDeg - 0.191) < 0.05,
+            "Energy-weighted Gaussian output divergence should be ~0.191°, was ${result.outputDivergenceDeg}°"
+        )
+    }
 }
+

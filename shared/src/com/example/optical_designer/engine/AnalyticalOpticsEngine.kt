@@ -10,6 +10,8 @@ import kotlin.math.atan
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
+import kotlin.math.sqrt
 import kotlin.math.tan
 
 /**
@@ -81,6 +83,7 @@ private data class OpticalRay(
     var y: Double,
     var u: Double,
     val y0: Double,
+    val weight: Double = 1.0,
     var isBlocked: Boolean = false
 )
 
@@ -104,17 +107,57 @@ object AnalyticalOpticsEngine {
         val initialSlope = tan(divHalfRad)
         val emitterHalfHeight = max(0.001, source.emitterHeightMm / 2.0)
 
-        // Generate ray bundle covering spatial emitter extent and angular divergence spectrum
-        val rayBundle = mutableListOf<OpticalRay>()
-        val ySamples = listOf(-emitterHalfHeight, -emitterHalfHeight * 0.5, 0.0, emitterHalfHeight * 0.5, emitterHalfHeight)
-        val uStepCount = 10
+        // Generate phase-space sampled ray bundle with radiometric power weighting
+        val rawRays = mutableListOf<OpticalRay>()
+        val ySampleCount = 21
+        val uSampleCount = 41
 
-        for (y0 in ySamples) {
-            for (i in -uStepCount..uStepCount) {
-                val u0 = (i.toDouble() / uStepCount.toDouble()) * initialSlope
-                rayBundle.add(OpticalRay(y0, u0, y0, false))
+        for (j in 0 until ySampleCount) {
+            val tY = if (ySampleCount > 1) -1.0 + 2.0 * j / (ySampleCount - 1) else 0.0
+            val y0 = tY * emitterHalfHeight
+
+            for (i in 0 until uSampleCount) {
+                val tU = if (uSampleCount > 1) -1.0 + 2.0 * i / (uSampleCount - 1) else 0.0
+                val u0 = tU * initialSlope
+                val theta = atan(u0)
+
+                val wSpatial = when (source.sourceType) {
+                    com.example.optical_designer.model.SourceType.LASER_DIODE,
+                    com.example.optical_designer.model.SourceType.COLLIMATED -> {
+                        kotlin.math.exp(-2.0 * tY * tY)
+                    }
+                    com.example.optical_designer.model.SourceType.LED,
+                    com.example.optical_designer.model.SourceType.POINT_SOURCE -> {
+                        1.0
+                    }
+                }
+
+                val wAngular = when (source.sourceType) {
+                    com.example.optical_designer.model.SourceType.LASER_DIODE,
+                    com.example.optical_designer.model.SourceType.COLLIMATED -> {
+                        val refHalfRad = max(1e-6, divHalfRad)
+                        kotlin.math.exp(-2.0 * (theta / refHalfRad).pow(2))
+                    }
+                    com.example.optical_designer.model.SourceType.LED -> {
+                        val absSin = abs(kotlin.math.sin(theta))
+                        val cosTheta = cos(theta)
+                        cosTheta * max(0.05, absSin)
+                    }
+                    com.example.optical_designer.model.SourceType.POINT_SOURCE -> {
+                        val absSin = abs(kotlin.math.sin(theta))
+                        max(0.05, absSin)
+                    }
+                }
+
+                val rawWeight = wSpatial * wAngular
+                rawRays.add(OpticalRay(y0, u0, y0, weight = rawWeight, isBlocked = false))
             }
         }
+
+        val totalInitialWeight = rawRays.sumOf { it.weight }.coerceAtLeast(1e-12)
+        val rayBundle = rawRays.map { ray ->
+            OpticalRay(ray.y, ray.u, ray.y0, weight = ray.weight / totalInitialWeight, isBlocked = ray.isBlocked)
+        }.toMutableList()
 
         var currentZ = source.positionZMm
         var geometricCollectionFraction = 1.0
@@ -155,20 +198,26 @@ object AnalyticalOpticsEngine {
                 currentZ = zTarget
             }
 
-            // 2. DETECTOR Screen handling: calculate encircled power & irradiance, then stop propagation
+            // 2. DETECTOR Screen handling: calculate encircled power & irradiance based on radiometric ray weights
             if (elem.type == OpticalElementType.DETECTOR) {
                 val beamRadiusAtDet = getTopUnblockedRadius(rayBundle, 0.1)
                 val spotDiamMm = beamRadiusAtDet * 2.0
                 val detRadiusMm = max(0.001, elem.clearApertureMm / 2.0)
 
-                val arrivingPowerW = source.opticalPowerW * geometricCollectionFraction * fresnelTransmissionFraction
+                val unblockedDetRays = rayBundle.filter { !it.isBlocked }
+                val arrivingWeightFraction = unblockedDetRays.sumOf { it.weight }
+                val arrivingPowerW = source.opticalPowerW * arrivingWeightFraction * fresnelTransmissionFraction
 
-                val passRatio = (detRadiusMm / max(1e-6, beamRadiusAtDet)).coerceIn(0.0, 1.0)
-                val encircledPowerFraction = passRatio * passRatio
-                val landedPowerW = arrivingPowerW * encircledPowerFraction
+                val landedRays = unblockedDetRays.filter { abs(it.y) <= detRadiusMm }
+                val landedWeightFraction = landedRays.sumOf { it.weight }
+                val landedPowerW = source.opticalPowerW * landedWeightFraction * fresnelTransmissionFraction
 
                 val detOpticalEfficiencyPct = if (source.opticalPowerW > 0.0) {
                     (landedPowerW / source.opticalPowerW) * 100.0
+                } else 0.0
+
+                val encircledPowerFraction = if (arrivingWeightFraction > 0.0) {
+                    (landedWeightFraction / arrivingWeightFraction).coerceIn(0.0, 1.0)
                 } else 0.0
 
                 val encircledPowerPct = encircledPowerFraction * 100.0
@@ -179,6 +228,15 @@ object AnalyticalOpticsEngine {
 
                 val integratedIrradianceWm2 = if (spotAreaM2 > 0.0) landedPowerW / spotAreaM2 else 0.0
                 val integratedIrradiancemWcm2 = integratedIrradianceWm2 / 10.0
+
+                // Radiometric peak irradiance using spatial ray density distribution
+                val centralRays = landedRays.filter { abs(it.y) <= 0.25 * max(1e-4, beamRadiusAtDet) }
+                val centralWeightFraction = centralRays.sumOf { it.weight }
+                val peakMultiplier = if (landedWeightFraction > 0.0 && beamRadiusAtDet > 0.0) {
+                    val centralAreaFraction = 0.0625 // (0.25)^2
+                    (centralWeightFraction / landedWeightFraction) / centralAreaFraction
+                } else 1.0
+                val peakIrradianceWm2 = integratedIrradianceWm2 * peakMultiplier.coerceIn(1.0, 3.0)
 
                 val detApertureAreaM2 = kotlin.math.PI * (detRadiusMm / 1000.0) * (detRadiusMm / 1000.0)
                 val apertureFillPct = if (detApertureAreaM2 > 0.0) {
@@ -200,7 +258,7 @@ object AnalyticalOpticsEngine {
                     apertureFillPct = apertureFillPct,
                     integratedIrradianceWm2 = integratedIrradianceWm2,
                     integratedIrradiancemWcm2 = integratedIrradiancemWcm2,
-                    peakIrradianceWm2 = integratedIrradianceWm2,
+                    peakIrradianceWm2 = peakIrradianceWm2,
                     bestFocusZMm = effectiveFocusZ
                 )
 
@@ -208,21 +266,22 @@ object AnalyticalOpticsEngine {
                 break
             }
 
-            // 3. Clear Aperture Clipping & Transmission Ratio at Element Front Face zFront
+            // 3. Clear Aperture Clipping & Ray Weight Collection Fraction at zFront
             val apertureRadius = elem.clearApertureMm / 2.0
             val beamRadiusAtElem = getTopUnblockedRadius(rayBundle, apertureRadius)
 
-            if (beamRadiusAtElem > apertureRadius && apertureRadius > 0.0) {
-                val passRatio = (apertureRadius / beamRadiusAtElem).coerceIn(0.0, 1.0)
-                geometricCollectionFraction *= (passRatio * passRatio)
-
-                // Block rays exceeding aperture boundary at front face
+            if (apertureRadius > 0.0) {
+                // Block rays exceeding clear aperture boundary
                 for (ray in rayBundle) {
                     if (!ray.isBlocked && abs(ray.y) > apertureRadius) {
                         ray.isBlocked = true
                     }
                 }
             }
+
+            // Update geometric collection fraction from surviving ray weights
+            val unblockedWeight = rayBundle.filter { !it.isBlocked }.sumOf { it.weight }
+            geometricCollectionFraction = unblockedWeight
 
             // Top radius of transmitted (unblocked) rays entering the element at zFront:
             val transmittedTopY = if (apertureRadius > 0.0) {
@@ -322,13 +381,40 @@ object AnalyticalOpticsEngine {
             }
         }
 
-        // Output Divergence Angle calculation from unblocked transmitted ray bundle slopes
+        // Output Divergence Angle calculation based on beam energy distribution
         val unblockedRays = rayBundle.filter { !it.isBlocked }
-        val maxFinalSlope = if (unblockedRays.isNotEmpty()) {
-            unblockedRays.maxOf { abs(it.u) }
-        } else initialSlope
+        val outputDivergenceDeg = if (unblockedRays.isNotEmpty()) {
+            val totalUnblockedWeight = unblockedRays.sumOf { it.weight }.coerceAtLeast(1e-12)
+            val meanU = unblockedRays.sumOf { it.weight * it.u } / totalUnblockedWeight
+            val varianceU = unblockedRays.sumOf { it.weight * (it.u - meanU) * (it.u - meanU) } / totalUnblockedWeight
+            val rmsU = sqrt(max(0.0, varianceU))
 
-        val outputDivergenceDeg = (2.0 * atan(maxFinalSlope) * 180.0 / kotlin.math.PI)
+            val effectiveSlope = when (source.sourceType) {
+                com.example.optical_designer.model.SourceType.LASER_DIODE,
+                com.example.optical_designer.model.SourceType.COLLIMATED -> {
+                    // Gaussian 1/e^2 divergence angle definition: 2 * RMS slope
+                    2.0 * rmsU
+                }
+                com.example.optical_designer.model.SourceType.LED,
+                com.example.optical_designer.model.SourceType.POINT_SOURCE -> {
+                    // LED / Lambertian divergence: 95th percentile encircled angular power slope
+                    val sortedRays = unblockedRays.sortedBy { abs(it.u) }
+                    var cumWeight = 0.0
+                    val targetWeight = 0.95 * totalUnblockedWeight
+                    var p95Slope = abs(sortedRays.last().u)
+                    for (r in sortedRays) {
+                        cumWeight += r.weight
+                        if (cumWeight >= targetWeight) {
+                            p95Slope = abs(r.u)
+                            break
+                        }
+                    }
+                    val profileSlope = max(sqrt(3.0) * rmsU, p95Slope)
+                    min(sortedRays.maxOf { abs(it.u) }, profileSlope)
+                }
+            }
+            (2.0 * atan(effectiveSlope) * 180.0 / kotlin.math.PI)
+        } else source.divergenceYDeg
 
         // Spot size at detector screen
         val detectorZ = detectorAnalysisResult?.detectorZMm
