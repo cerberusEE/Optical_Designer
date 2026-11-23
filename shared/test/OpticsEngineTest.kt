@@ -212,8 +212,8 @@ class OpticsEngineTest {
         assertTrue(detRes.landedPowerW > 0.0, "Landed power on detector screen should be > 0")
         assertTrue(detRes.opticalEfficiencyPct > 0.0, "Detector optical efficiency should be > 0%")
         assertTrue(
-            abs(result.opticalEfficiencyPct - detRes.opticalEfficiencyPct) < 1e-4,
-            "System efficiency should equal detector optical efficiency when detector screen is present"
+            detRes.opticalEfficiencyPct <= result.opticalEfficiencyPct + 1e-4,
+            "Detector optical efficiency should be <= system throughput efficiency (${detRes.opticalEfficiencyPct}% <= ${result.opticalEfficiencyPct}%)"
         )
         assertTrue(detRes.integratedIrradianceWm2 > 0.0, "Integrated irradiance over circular screen should be > 0 W/m²")
     }
@@ -735,6 +735,47 @@ class OpticsEngineTest {
             result.geometricCollectionPct > 0.0,
             "Central on-axis iris must collect non-zero power for LED source (${result.geometricCollectionPct}%)"
         )
+    }
+
+    @Test
+    fun `test adding a detector screen at far range does not alter system output power efficiency or radiant intensity`() {
+        val source = LightSource(
+            name = "LED Source",
+            sourceType = SourceType.LED,
+            cwlNm = 520.0,
+            opticalPowerW = 1.0,
+            divergenceYDeg = 40.0,
+            emitterHeightMm = 1.0,
+            positionZMm = 0.0
+        )
+        val lens = OpticalElement(
+            id = "lens_1",
+            name = "Collimating Lens",
+            type = OpticalElementType.PLANO_CONVEX,
+            positionZMm = 50.0,
+            clearApertureMm = 40.0,
+            focalLengthMm = 50.0
+        )
+        val detectorAt1km = OpticalElement(
+            id = "det_1km",
+            name = "Detector Screen at 1km",
+            type = OpticalElementType.DETECTOR,
+            positionZMm = 1_000_000.0, // 1 km
+            clearApertureMm = 10.0 // Small detector screen at 1 km
+        )
+
+        val systemWithoutDetector = AnalyticalOpticsEngine.calculateSystem(source, listOf(lens))
+        val systemWithDetector = AnalyticalOpticsEngine.calculateSystem(source, listOf(lens, detectorAt1km))
+
+        // System output power, optical efficiency, and radiant intensity must remain identical
+        assertEquals(systemWithoutDetector.outputPowerW, systemWithDetector.outputPowerW, 1e-6)
+        assertEquals(systemWithoutDetector.opticalEfficiencyPct, systemWithDetector.opticalEfficiencyPct, 1e-6)
+        assertEquals(systemWithoutDetector.radiantIntensityWsr, systemWithDetector.radiantIntensityWsr, 1e-4)
+
+        // Detector screen evaluation panel statistics are populated separately in detectorResult
+        val detRes = systemWithDetector.detectorResult
+        assertTrue(detRes != null, "Detector result must be populated")
+        assertTrue(detRes.landedPowerW < systemWithDetector.outputPowerW, "Landed power at 1km on 10mm aperture is small subset of output power")
     }
 }
 

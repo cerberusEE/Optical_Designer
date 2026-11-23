@@ -458,10 +458,8 @@ object AnalyticalOpticsEngine {
         val fresnelTransmissionPct = (fresnelTransmissionFraction * 100.0).coerceIn(0.0, 100.0)
         val reflectionLossPct = geometricCollectionPct * (1.0 - fresnelTransmissionFraction)
 
-        val finalOpticalEfficiencyPct = detectorAnalysisResult?.opticalEfficiencyPct
-            ?: (netEfficiencyFraction * 100.0).coerceIn(0.0, 100.0)
-        val finalOutputPowerW = detectorAnalysisResult?.landedPowerW
-            ?: (source.opticalPowerW * netEfficiencyFraction)
+        val finalOpticalEfficiencyPct = (netEfficiencyFraction * 100.0).coerceIn(0.0, 100.0)
+        val finalOutputPowerW = (source.opticalPowerW * netEfficiencyFraction)
 
         // Radiometric Calculations: Power & Radiant Intensity
         val outputHalfRad = outputDivergenceDeg * kotlin.math.PI / 360.0
