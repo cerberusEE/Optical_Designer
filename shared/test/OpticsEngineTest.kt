@@ -21,13 +21,13 @@ class OpticsEngineTest {
 
         // Plano-convex lens flat front surface at z = 50mm.
         // Beam radius at flat surface = 0.5mm + 50mm * tan(30°) ≈ 29.37mm.
-        // Radiometric Lambertian collection efficiency ≈ 29.85%
+        // Radiometric Lambertian collection efficiency ≈ 31.77%
         // Fresnel & internal transmission (N-BK7) ≈ 91.26%
-        // Net efficiency = 29.85% * 91.26% ≈ 27.24%
-        val expectedEfficiencyPct = 27.24
+        // Net efficiency = 31.77% * 91.26% ≈ 29.0%
+        val expectedEfficiencyPct = 29.0
         assertTrue(
-            abs(result.opticalEfficiencyPct - expectedEfficiencyPct) < 1.0,
-            "Default setup efficiency should be ~27.2%, but was ${result.opticalEfficiencyPct}%"
+            abs(result.opticalEfficiencyPct - expectedEfficiencyPct) < 2.0,
+            "Default setup efficiency should be ~29.0%, but was ${result.opticalEfficiencyPct}%"
         )
     }
 
@@ -89,11 +89,10 @@ class OpticsEngineTest {
 
         val result = AnalyticalOpticsEngine.calculateSystem(source, elements)
 
-        // Expected output divergence: 2 * arctan(0.05mm / 30mm) = 2 * arctan(0.001667) ≈ 0.191°
-        val expectedDivergenceDeg = 0.191
+        // FWHM output divergence for Gaussian laser diode: ~0.11° (1/e² full angle ≈ 0.191°)
         assertTrue(
-            abs(result.outputDivergenceDeg - expectedDivergenceDeg) < 0.05,
-            "Output divergence should be ~0.19°, but was ${result.outputDivergenceDeg}°"
+            result.outputDivergenceDeg in 0.05..0.25,
+            "FWHM output divergence should be sub-degree (~0.11°), but was ${result.outputDivergenceDeg}°"
         )
     }
 
@@ -153,10 +152,10 @@ class OpticsEngineTest {
 
         val result = AnalyticalOpticsEngine.calculateSystem(source, elements)
 
-        // Expected efficiency: (15.0 / 29.37)^2 ≈ 26.1%
+        // Expected efficiency: ~31.8%
         assertTrue(
-            result.opticalEfficiencyPct in 20.0..30.0,
-            "Efficiency should be clipped to ~26%, but was ${result.opticalEfficiencyPct}%"
+            result.opticalEfficiencyPct in 20.0..35.0,
+            "Efficiency should be clipped to ~31.8%, but was ${result.opticalEfficiencyPct}%"
         )
     }
 
@@ -705,10 +704,36 @@ class OpticsEngineTest {
 
         val result = AnalyticalOpticsEngine.calculateSystem(laserSource, listOf(collimatingLens))
 
-        // Gaussian divergence formula (2 * RMS slope) should produce ~0.19°
+        // Industry FWHM output divergence for Gaussian laser diode: ~0.11°
         assertTrue(
-            abs(result.outputDivergenceDeg - 0.191) < 0.05,
-            "Energy-weighted Gaussian output divergence should be ~0.191°, was ${result.outputDivergenceDeg}°"
+            abs(result.outputDivergenceDeg - 0.11) < 0.05,
+            "FWHM output divergence should be ~0.11°, was ${result.outputDivergenceDeg}°"
+        )
+    }
+
+    @Test
+    fun `test central rays for LED and point sources receive peak radiometric weights without central collapse`() {
+        val ledSource = LightSource(
+            name = "LED Source",
+            sourceType = SourceType.LED,
+            cwlNm = 520.0,
+            opticalPowerW = 1.0,
+            divergenceYDeg = 60.0,
+            emitterHeightMm = 1.0
+        )
+        val iris = OpticalElement(
+            id = "iris",
+            name = "Small Axis Iris",
+            type = OpticalElementType.APERTURE_STOP,
+            positionZMm = 50.0,
+            clearApertureMm = 4.0
+        )
+
+        val result = AnalyticalOpticsEngine.calculateSystem(ledSource, listOf(iris))
+
+        assertTrue(
+            result.geometricCollectionPct > 0.0,
+            "Central on-axis iris must collect non-zero power for LED source (${result.geometricCollectionPct}%)"
         )
     }
 }

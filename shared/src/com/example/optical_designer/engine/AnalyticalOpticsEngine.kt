@@ -107,27 +107,33 @@ object AnalyticalOpticsEngine {
         val initialSlope = tan(divHalfRad)
         val emitterHalfHeight = max(0.001, source.emitterHeightMm / 2.0)
 
-        // Generate phase-space sampled ray bundle with radiometric power weighting
+        // Generate phase-space sampled ray bundle with rigorous radiometric power weighting
         val rawRays = mutableListOf<OpticalRay>()
         val ySampleCount = 21
         val uSampleCount = 41
+        val deltaTheta = if (uSampleCount > 1) (2.0 * divHalfRad) / (uSampleCount - 1) else 0.0
 
         for (j in 0 until ySampleCount) {
             val tY = if (ySampleCount > 1) -1.0 + 2.0 * j / (ySampleCount - 1) else 0.0
             val y0 = tY * emitterHalfHeight
 
             for (i in 0 until uSampleCount) {
-                val tU = if (uSampleCount > 1) -1.0 + 2.0 * i / (uSampleCount - 1) else 0.0
-                val u0 = tU * initialSlope
-                val theta = atan(u0)
+                val tTheta = if (uSampleCount > 1) -1.0 + 2.0 * i / (uSampleCount - 1) else 0.0
+                val theta = tTheta * divHalfRad
+                val u0 = tan(theta)
+
+                val theta1 = theta - deltaTheta / 2.0
+                val theta2 = theta + deltaTheta / 2.0
 
                 val wSpatial = when (source.sourceType) {
                     com.example.optical_designer.model.SourceType.LASER_DIODE,
                     com.example.optical_designer.model.SourceType.COLLIMATED -> {
+                        // Gaussian spatial waist profile (1/e^2 radius = emitterHalfHeight)
                         kotlin.math.exp(-2.0 * tY * tY)
                     }
                     com.example.optical_designer.model.SourceType.LED,
                     com.example.optical_designer.model.SourceType.POINT_SOURCE -> {
+                        // Uniform spatial die emission
                         1.0
                     }
                 }
@@ -135,17 +141,25 @@ object AnalyticalOpticsEngine {
                 val wAngular = when (source.sourceType) {
                     com.example.optical_designer.model.SourceType.LASER_DIODE,
                     com.example.optical_designer.model.SourceType.COLLIMATED -> {
+                        // Gaussian angular far-field profile (1/e^2 half-angle = divHalfRad)
                         val refHalfRad = max(1e-6, divHalfRad)
                         kotlin.math.exp(-2.0 * (theta / refHalfRad).pow(2))
                     }
                     com.example.optical_designer.model.SourceType.LED -> {
-                        val absSin = abs(kotlin.math.sin(theta))
-                        val cosTheta = cos(theta)
-                        cosTheta * max(0.05, absSin)
+                        // Rigorous signed 3D Lambertian bin integration: ∫ cos(θ) sin|θ| dθ
+                        if (theta1 < 0.0 && theta2 > 0.0) {
+                            0.5 * (kotlin.math.sin(theta1) * kotlin.math.sin(theta1) + kotlin.math.sin(theta2) * kotlin.math.sin(theta2))
+                        } else {
+                            0.5 * abs(kotlin.math.sin(theta2) * kotlin.math.sin(theta2) - kotlin.math.sin(theta1) * kotlin.math.sin(theta1))
+                        }
                     }
                     com.example.optical_designer.model.SourceType.POINT_SOURCE -> {
-                        val absSin = abs(kotlin.math.sin(theta))
-                        max(0.05, absSin)
+                        // Rigorous signed isotropic 3D bin integration: ∫ sin|θ| dθ
+                        if (theta1 < 0.0 && theta2 > 0.0) {
+                            (1.0 - cos(theta1)) + (1.0 - cos(theta2))
+                        } else {
+                            abs(cos(theta1) - cos(theta2))
+                        }
                     }
                 }
 
@@ -236,7 +250,7 @@ object AnalyticalOpticsEngine {
                     val centralAreaFraction = 0.0625 // (0.25)^2
                     (centralWeightFraction / landedWeightFraction) / centralAreaFraction
                 } else 1.0
-                val peakIrradianceWm2 = integratedIrradianceWm2 * peakMultiplier.coerceIn(1.0, 3.0)
+                val peakIrradianceWm2 = integratedIrradianceWm2 * peakMultiplier
 
                 val detApertureAreaM2 = kotlin.math.PI * (detRadiusMm / 1000.0) * (detRadiusMm / 1000.0)
                 val apertureFillPct = if (detApertureAreaM2 > 0.0) {
@@ -381,39 +395,52 @@ object AnalyticalOpticsEngine {
             }
         }
 
-        // Output Divergence Angle calculation based on beam energy distribution
+        // Industry-Standard FWHM (Full-Width at Half-Maximum) Output Divergence calculation
         val unblockedRays = rayBundle.filter { !it.isBlocked }
         val outputDivergenceDeg = if (unblockedRays.isNotEmpty()) {
-            val totalUnblockedWeight = unblockedRays.sumOf { it.weight }.coerceAtLeast(1e-12)
-            val meanU = unblockedRays.sumOf { it.weight * it.u } / totalUnblockedWeight
-            val varianceU = unblockedRays.sumOf { it.weight * (it.u - meanU) * (it.u - meanU) } / totalUnblockedWeight
-            val rmsU = sqrt(max(0.0, varianceU))
+            val maxTheta = unblockedRays.maxOf { abs(atan(it.u)) }
 
-            val effectiveSlope = when (source.sourceType) {
-                com.example.optical_designer.model.SourceType.LASER_DIODE,
-                com.example.optical_designer.model.SourceType.COLLIMATED -> {
-                    // Gaussian 1/e^2 divergence angle definition: 2 * RMS slope
-                    2.0 * rmsU
-                }
-                com.example.optical_designer.model.SourceType.LED,
-                com.example.optical_designer.model.SourceType.POINT_SOURCE -> {
-                    // LED / Lambertian divergence: 95th percentile encircled angular power slope
-                    val sortedRays = unblockedRays.sortedBy { abs(it.u) }
-                    var cumWeight = 0.0
-                    val targetWeight = 0.95 * totalUnblockedWeight
-                    var p95Slope = abs(sortedRays.last().u)
-                    for (r in sortedRays) {
-                        cumWeight += r.weight
-                        if (cumWeight >= targetWeight) {
-                            p95Slope = abs(r.u)
-                            break
-                        }
+            if (maxTheta < 1e-9) {
+                0.0
+            } else {
+                // Smooth local differential density p(theta) using a moving window deltaTheta to eliminate binning aliasing
+                val deltaTheta = max(1e-5, maxTheta * 0.15)
+                fun localDensity(t: Double): Double {
+                    val tLow = max(0.0, t - deltaTheta)
+                    val tHigh = t + deltaTheta
+                    val inWindow = unblockedRays.filter {
+                        val absT = abs(atan(it.u))
+                        absT >= tLow && absT <= tHigh
                     }
-                    val profileSlope = max(sqrt(3.0) * rmsU, p95Slope)
-                    min(sortedRays.maxOf { abs(it.u) }, profileSlope)
+                    val weightInWindow = inWindow.sumOf { it.weight }
+                    val windowSpan = (tHigh - tLow).coerceAtLeast(1e-6)
+                    return weightInWindow / windowSpan
                 }
+
+                val peakDensity = localDensity(0.0).coerceAtLeast(1e-12)
+                val halfDensity = 0.5 * peakDensity
+
+                // Locate half-intensity angle theta_half where local differential density drops to 50% of peak
+                val sampleSteps = 50
+                var fwhmHalfAngle = maxTheta
+
+                for (s in 1..sampleSteps) {
+                    val tEval = (s.toDouble() / sampleSteps.toDouble()) * maxTheta
+                    val dEval = localDensity(tEval)
+
+                    if (dEval < halfDensity) {
+                        val tPrev = ((s - 1).toDouble() / sampleSteps.toDouble()) * maxTheta
+                        val dPrev = localDensity(tPrev)
+                        val frac = if (abs(dPrev - dEval) > 1e-12) {
+                            (dPrev - halfDensity) / (dPrev - dEval)
+                        } else 0.5
+                        fwhmHalfAngle = tPrev + frac * (tEval - tPrev)
+                        break
+                    }
+                }
+
+                (2.0 * fwhmHalfAngle * 180.0 / kotlin.math.PI).coerceAtLeast(0.0)
             }
-            (2.0 * atan(effectiveSlope) * 180.0 / kotlin.math.PI)
         } else source.divergenceYDeg
 
         // Spot size at detector screen
