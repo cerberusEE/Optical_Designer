@@ -165,6 +165,7 @@ data class OpticalElement(
     val material: GlassMaterial = GlassMaterial.N_BK7,
     val isCoated: Boolean = false, // Checkbox for AR coated optics / custom transmission override
     val customTransmissionPct: Double = 99.0, // Manual transmission entry percentage when coated
+    val isFlipped: Boolean = false, // Orientation toggle (e.g. flat face vs curved face first)
     val enabled: Boolean = true
 ) {
     /**

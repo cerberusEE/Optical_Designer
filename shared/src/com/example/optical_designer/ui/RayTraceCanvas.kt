@@ -585,19 +585,35 @@ private fun DrawScope.drawOpticalElement(
     when (elem.type) {
         OpticalElementType.PLANO_CONVEX -> {
             val path = Path()
-            val targetApexZ = zX + thickness
-            val edgeZ = (zX + 2f).coerceAtMost(targetApexZ - 1f)
-            val controlZ = 2f * targetApexZ - edgeZ
+            if (!elem.isFlipped) {
+                val targetApexZ = zX
+                val edgeZ = (zX + thickness - 2f).coerceAtLeast(targetApexZ + 1f)
+                val controlZ = 2f * targetApexZ - edgeZ
 
-            // Flat front surface at zX (positionZMm facing incoming beam), convex back surface facing right
-            path.moveTo(zX, centerY - apertureHalf)
-            path.lineTo(zX, centerY + apertureHalf)
-            path.lineTo(edgeZ, centerY + apertureHalf)
-            path.quadraticTo(
-                controlZ, centerY,
-                edgeZ, centerY - apertureHalf
-            )
-            path.close()
+                // Normal orientation: Convex front surface facing left at zX, flat back surface at zX + thickness
+                path.moveTo(zX + thickness, centerY - apertureHalf)
+                path.lineTo(zX + thickness, centerY + apertureHalf)
+                path.lineTo(edgeZ, centerY + apertureHalf)
+                path.quadraticTo(
+                    controlZ, centerY,
+                    edgeZ, centerY - apertureHalf
+                )
+                path.close()
+            } else {
+                val targetApexZ = zX + thickness
+                val edgeZ = (zX + 2f).coerceAtMost(targetApexZ - 1f)
+                val controlZ = 2f * targetApexZ - edgeZ
+
+                // Flipped orientation: Flat front surface at zX, convex back surface facing right
+                path.moveTo(zX, centerY - apertureHalf)
+                path.lineTo(zX, centerY + apertureHalf)
+                path.lineTo(edgeZ, centerY + apertureHalf)
+                path.quadraticTo(
+                    controlZ, centerY,
+                    edgeZ, centerY - apertureHalf
+                )
+                path.close()
+            }
 
             drawPath(path = path, color = glassFillColor)
             drawPath(path = path, color = glassStrokeColor, style = Stroke(width = 2f))

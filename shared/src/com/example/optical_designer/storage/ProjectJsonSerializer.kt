@@ -282,6 +282,7 @@ object ProjectJsonSerializer {
             "material" to glassMaterialToJsonObject(element.material),
             "isCoated" to JsonValue.JsonBoolean(element.isCoated),
             "customTransmissionPct" to JsonValue.JsonNumber(element.customTransmissionPct),
+            "isFlipped" to JsonValue.JsonBoolean(element.isFlipped),
             "enabled" to JsonValue.JsonBoolean(element.enabled)
         )
         if (element.explicitThicknessMm != null) {
@@ -368,6 +369,7 @@ object ProjectJsonSerializer {
             material = material,
             isCoated = obj.getBoolean("isCoated", false),
             customTransmissionPct = obj.getDouble("customTransmissionPct", 99.0),
+            isFlipped = obj.getBoolean("isFlipped", false),
             enabled = obj.getBoolean("enabled", true)
         )
     }

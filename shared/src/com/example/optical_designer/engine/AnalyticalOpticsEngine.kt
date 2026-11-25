@@ -1,6 +1,7 @@
 package com.example.optical_designer.engine
 
 import androidx.compose.ui.graphics.Color
+import com.example.optical_designer.model.GlassMaterial
 import com.example.optical_designer.model.LightSource
 import com.example.optical_designer.model.OpticalElement
 import com.example.optical_designer.model.OpticalElementType
@@ -87,13 +88,161 @@ private data class OpticalRay(
     var isBlocked: Boolean = false
 )
 
+private data class LensPrescription(
+    val r1: Double,             // Radius of surface 1 in mm (Double.POSITIVE_INFINITY for flat)
+    val r2: Double,             // Radius of surface 2 in mm (Double.POSITIVE_INFINITY for flat)
+    val n1: Double = 1.0,       // Medium index before surface 1
+    val nGlass: Double,         // Glass index of lens
+    val n3: Double = 1.0,       // Medium index after surface 2
+    val isDoublet: Boolean = false,
+    val rInt: Double = Double.POSITIVE_INFINITY, // Cemented surface radius
+    val nFlint: Double = 1.62,   // Flint glass index
+    val crownThickness: Double = 0.0,
+    val flintThickness: Double = 0.0
+)
+
 object AnalyticalOpticsEngine {
+
+    private fun getLensPrescription(elem: OpticalElement): LensPrescription {
+        val f = elem.focalLengthMm
+        val fAbs = abs(f)
+        val nd = elem.material.nd
+        val thickness = elem.thicknessMm
+
+        return when (elem.type) {
+            OpticalElementType.PLANO_CONVEX -> {
+                val r = fAbs * (nd - 1.0)
+                if (f >= 0.0) {
+                    if (!elem.isFlipped) {
+                        // Normal orientation: Curved face facing left (R1 = +r > 0), flat back face facing right (R2 = inf)
+                        LensPrescription(
+                            r1 = r,
+                            r2 = Double.POSITIVE_INFINITY,
+                            nGlass = nd
+                        )
+                    } else {
+                        // Flipped orientation: Flat face facing left (R1 = inf), convex back face facing right (R2 = -r < 0)
+                        LensPrescription(
+                            r1 = Double.POSITIVE_INFINITY,
+                            r2 = -r,
+                            nGlass = nd
+                        )
+                    }
+                } else {
+                    // Negative focal length (Plano-Concave)
+                    if (!elem.isFlipped) {
+                        // Normal orientation: Concave face facing left (R1 = -r < 0), flat back face facing right (R2 = inf)
+                        LensPrescription(
+                            r1 = -r,
+                            r2 = Double.POSITIVE_INFINITY,
+                            nGlass = nd
+                        )
+                    } else {
+                        // Flipped orientation: Flat face facing left (R1 = inf), concave back face facing right (R2 = +r > 0)
+                        LensPrescription(
+                            r1 = Double.POSITIVE_INFINITY,
+                            r2 = r,
+                            nGlass = nd
+                        )
+                    }
+                }
+            }
+            OpticalElementType.BICONVEX -> {
+                val disc = 1.0 - thickness / (nd * fAbs)
+                val r = if (disc > 0.0 && fAbs > 0.0) {
+                    fAbs * (nd - 1.0) * (1.0 + sqrt(disc))
+                } else {
+                    2.0 * fAbs * (nd - 1.0)
+                }
+
+                if (f >= 0.0) {
+                    LensPrescription(
+                        r1 = r,
+                        r2 = -r,
+                        nGlass = nd
+                    )
+                } else {
+                    // Biconcave
+                    LensPrescription(
+                        r1 = -r,
+                        r2 = r,
+                        nGlass = nd
+                    )
+                }
+            }
+            OpticalElementType.ACHROMATIC_DOUBLET -> {
+                val v1 = elem.material.vd
+                val flintMaterial = if (elem.material.name.contains("F2")) GlassMaterial.N_BK7 else GlassMaterial.F2
+                val v2 = flintMaterial.vd
+                val n2 = flintMaterial.nd
+
+                val pNet = if (f != 0.0) 1.0 / f else 0.0
+                val vDiff = max(1.0, v1 - v2)
+                val p1 = pNet * (v1 / vDiff)
+                val p2 = -pNet * (v2 / vDiff)
+
+                val r1 = if (p1 != 0.0) 2.0 * (nd - 1.0) / p1 else 2.0 * fAbs * (nd - 1.0)
+                val rInt = -r1
+                val invR2 = (1.0 / rInt) - (p2 / (n2 - 1.0))
+                val r2 = if (invR2 != 0.0) 1.0 / invR2 else -r1 * 2.5
+
+                val crownT = thickness * 0.7
+                val flintT = thickness * 0.3
+
+                if (!elem.isFlipped) {
+                    LensPrescription(
+                        r1 = r1,
+                        r2 = r2,
+                        nGlass = nd,
+                        isDoublet = true,
+                        rInt = rInt,
+                        nFlint = n2,
+                        crownThickness = crownT,
+                        flintThickness = flintT
+                    )
+                } else {
+                    LensPrescription(
+                        r1 = -r2,
+                        r2 = -r1,
+                        nGlass = n2,
+                        isDoublet = true,
+                        rInt = -rInt,
+                        nFlint = nd,
+                        crownThickness = flintT,
+                        flintThickness = crownT
+                    )
+                }
+            }
+            OpticalElementType.PARABOLIC_MIRROR,
+            OpticalElementType.APERTURE_STOP,
+            OpticalElementType.DETECTOR -> {
+                LensPrescription(
+                    r1 = Double.POSITIVE_INFINITY,
+                    r2 = Double.POSITIVE_INFINITY,
+                    nGlass = 1.0
+                )
+            }
+        }
+    }
+
+    private fun refractSurface(ray: OpticalRay, nBefore: Double, nAfter: Double, radius: Double) {
+        if (ray.isBlocked) return
+        if (radius.isInfinite() || radius == 0.0) {
+            // Paraxial Snell's law refraction at flat surface: u_after = (nBefore / nAfter) * u_before
+            ray.u = (nBefore / nAfter) * ray.u
+        } else {
+            // Paraxial Snell's law refraction matrix at curved surface:
+            // u_after = (nBefore / nAfter) * u_before - ((nAfter - nBefore) / (nAfter * radius)) * y
+            val powerCoeff = (nAfter - nBefore) / (nAfter * radius)
+            ray.u = (nBefore / nAfter) * ray.u - powerCoeff * ray.y
+        }
+    }
 
     /**
      * Physics-based Analytical Engine for multi-lens optical systems.
-     * Uses Matrix Ray Tracing and aperture-filtered ray bundle tracing
-     * at lens principal planes to support any arbitrary combination of optical elements
-     * and relative distances.
+     * Uses ABCD Matrix Ray Tracing (surface refractions and internal glass propagation)
+     * and aperture-filtered ray bundle tracing to support any arbitrary combination of optical elements,
+     * thickness, curvatures, orientations, and relative distances.
      */
     fun calculateSystem(
         source: LightSource,
@@ -181,7 +330,7 @@ object AnalyticalOpticsEngine {
         var detectorAnalysisResult: DetectorAnalysisResult? = null
         var lastWaistZMm: Double? = null
 
-        // Trace ray bundle through active optical elements
+        // Trace ray bundle through active optical elements using ABCD surface & glass propagation
         for (elem in activeElements) {
             val thickness = elem.thicknessMm
             val zElem = elem.positionZMm
@@ -212,7 +361,7 @@ object AnalyticalOpticsEngine {
                 currentZ = zTarget
             }
 
-            // 2. DETECTOR Screen handling: calculate encircled power & irradiance based on radiometric ray weights
+            // 2. DETECTOR Screen handling
             if (elem.type == OpticalElementType.DETECTOR) {
                 val beamRadiusAtDet = getTopUnblockedRadius(rayBundle, 0.1)
                 val spotDiamMm = beamRadiusAtDet * 2.0
@@ -243,7 +392,6 @@ object AnalyticalOpticsEngine {
                 val integratedIrradianceWm2 = if (spotAreaM2 > 0.0) landedPowerW / spotAreaM2 else 0.0
                 val integratedIrradiancemWcm2 = integratedIrradianceWm2 / 10.0
 
-                // Radiometric peak irradiance using spatial ray density distribution
                 val centralRays = landedRays.filter { abs(it.y) <= 0.25 * max(1e-4, beamRadiusAtDet) }
                 val centralWeightFraction = centralRays.sumOf { it.weight }
                 val peakMultiplier = if (landedWeightFraction > 0.0 && beamRadiusAtDet > 0.0) {
@@ -276,7 +424,6 @@ object AnalyticalOpticsEngine {
                     bestFocusZMm = effectiveFocusZ
                 )
 
-                // Terminate propagation at detector plane
                 break
             }
 
@@ -285,7 +432,6 @@ object AnalyticalOpticsEngine {
             val beamRadiusAtElem = getTopUnblockedRadius(rayBundle, apertureRadius)
 
             if (apertureRadius > 0.0) {
-                // Block rays exceeding clear aperture boundary
                 for (ray in rayBundle) {
                     if (!ray.isBlocked && abs(ray.y) > apertureRadius) {
                         ray.isBlocked = true
@@ -293,30 +439,102 @@ object AnalyticalOpticsEngine {
                 }
             }
 
-            // Update geometric collection fraction from surviving ray weights
             val unblockedWeight = rayBundle.filter { !it.isBlocked }.sumOf { it.weight }
             geometricCollectionFraction = unblockedWeight
 
-            // Top radius of transmitted (unblocked) rays entering the element at zFront:
             val transmittedTopY = if (apertureRadius > 0.0) {
                 min(apertureRadius, beamRadiusAtElem)
             } else {
                 beamRadiusAtElem
             }
 
-            // Propagate rays from zFront to refraction plane if not already there
-            val zRefract = if (elem.type == OpticalElementType.PLANO_CONVEX) zFront else zElem
-            if (zRefract > currentZ) {
-                val dzToElem = zRefract - currentZ
-                propagateRayBundleInPlace(rayBundle, dzToElem)
-                currentZ = zRefract
-            }
-
-            // 4. Optical Element Refraction / Reflection at Refraction Plane: Δu = -y / f
+            // 4. Matrix ABCD Refraction and Thickness Propagation
             when (elem.type) {
                 OpticalElementType.PLANO_CONVEX,
                 OpticalElementType.BICONVEX,
-                OpticalElementType.ACHROMATIC_DOUBLET,
+                OpticalElementType.ACHROMATIC_DOUBLET -> {
+                    val presc = getLensPrescription(elem)
+
+                    // Refraction at Surface 1 (Air -> Glass)
+                    for (ray in rayBundle) {
+                        refractSurface(ray, nBefore = 1.0, nAfter = presc.nGlass, radius = presc.r1)
+                    }
+
+                    if (!presc.isDoublet) {
+                        // Single glass element (Plano-Convex or Biconvex)
+                        val glassThickness = max(0.001, zBack - zFront)
+                        propagateRayBundleInPlace(rayBundle, glassThickness)
+
+                        val exitTopYLens = getTopUnblockedRadius(rayBundle, transmittedTopY)
+                        segments.add(
+                            BeamSegment(
+                                startZ = zFront,
+                                endZ = zBack,
+                                startTopY = transmittedTopY,
+                                startBottomY = -transmittedTopY,
+                                endTopY = exitTopYLens,
+                                endBottomY = -exitTopYLens,
+                                color = sourceColor
+                            )
+                        )
+
+                        // Refraction at Surface 2 (Glass -> Air)
+                        for (ray in rayBundle) {
+                            refractSurface(ray, nBefore = presc.nGlass, nAfter = 1.0, radius = presc.r2)
+                        }
+                    } else {
+                        // Achromatic Doublet (2 glasses, 3 surfaces)
+                        val totalT = max(0.001, zBack - zFront)
+                        val crownT = (presc.crownThickness).coerceIn(0.001, totalT - 0.001)
+                        val flintT = max(0.001, totalT - crownT)
+
+                        // Propagate through Crown glass
+                        propagateRayBundleInPlace(rayBundle, crownT)
+
+                        // Refract at cemented interface
+                        for (ray in rayBundle) {
+                            refractSurface(ray, nBefore = presc.nGlass, nAfter = presc.nFlint, radius = presc.rInt)
+                        }
+
+                        // Propagate through Flint glass
+                        propagateRayBundleInPlace(rayBundle, flintT)
+
+                        val exitTopYLens = getTopUnblockedRadius(rayBundle, transmittedTopY)
+                        segments.add(
+                            BeamSegment(
+                                startZ = zFront,
+                                endZ = zBack,
+                                startTopY = transmittedTopY,
+                                startBottomY = -transmittedTopY,
+                                endTopY = exitTopYLens,
+                                endBottomY = -exitTopYLens,
+                                color = sourceColor
+                            )
+                        )
+
+                        // Refract at Surface 3 (Flint -> Air)
+                        for (ray in rayBundle) {
+                            refractSurface(ray, nBefore = presc.nFlint, nAfter = 1.0, radius = presc.r2)
+                        }
+                    }
+
+                    fresnelTransmissionFraction *= elem.effectiveTransmissionFraction
+
+                    // Track focal waist Z for metrics if rays are converging
+                    val unblocked = rayBundle.filter { !it.isBlocked }
+                    val axialRays = unblocked.filter { abs(it.y0) < 1e-5 }
+                    val candidateRays = axialRays.ifEmpty { unblocked }
+                    val convergingRay = candidateRays.firstOrNull { it.y > 0 && it.u < 0 }
+                    if (convergingRay != null) {
+                        val dzWaist = -convergingRay.y / convergingRay.u
+                        val waistZ = zBack + dzWaist
+                        if (waistZ > zBack) {
+                            lastWaistZMm = waistZ
+                        }
+                    }
+
+                    currentZ = zBack
+                }
                 OpticalElementType.PARABOLIC_MIRROR -> {
                     val f = elem.focalLengthMm
                     if (f != 0.0) {
@@ -328,7 +546,6 @@ object AnalyticalOpticsEngine {
                     }
                     fresnelTransmissionFraction *= elem.effectiveTransmissionFraction
 
-                    // Track focal waist Z for metrics if rays are converging
                     val unblocked = rayBundle.filter { !it.isBlocked }
                     val axialRays = unblocked.filter { abs(it.y0) < 1e-5 }
                     val candidateRays = axialRays.ifEmpty { unblocked }
@@ -342,36 +559,15 @@ object AnalyticalOpticsEngine {
                     }
                 }
                 OpticalElementType.APERTURE_STOP -> {
-                    // Pure aperture stop: no slope change
+                    // Pure aperture stop
                 }
                 OpticalElementType.DETECTOR -> {
                     // Handled above
                 }
             }
-
-            // 5. Internal propagation through optic thickness to zBack
-            val dzRear = zBack - currentZ
-            if (dzRear > 0) {
-                propagateRayBundleInPlace(rayBundle, dzRear)
-                val exitTopYLens = getTopUnblockedRadius(rayBundle, transmittedTopY)
-
-                segments.add(
-                    BeamSegment(
-                        startZ = zFront,
-                        endZ = zBack,
-                        startTopY = transmittedTopY,
-                        startBottomY = -transmittedTopY,
-                        endTopY = exitTopYLens,
-                        endBottomY = -exitTopYLens,
-                        color = sourceColor
-                    )
-                )
-
-                currentZ = zBack
-            }
         }
 
-        // 6. Free-space propagation past final element to viewport boundary (if no detector stopped it)
+        // 5. Free-space propagation past final element to viewport boundary
         if (detectorAnalysisResult == null) {
             val maxElementZ = activeElements.maxOfOrNull {
                 if (it.type == OpticalElementType.PLANO_CONVEX) {
@@ -395,61 +591,27 @@ object AnalyticalOpticsEngine {
             }
         }
 
-        // Industry-Standard FWHM (Full-Width at Half-Maximum) Output Divergence calculation
+        // Smooth, non-aliasing FWHM Output Divergence calculation from radiometric angular variance
         val unblockedRays = rayBundle.filter { !it.isBlocked }
         val outputDivergenceDeg = if (unblockedRays.isNotEmpty()) {
-            val maxTheta = unblockedRays.maxOf { abs(atan(it.u)) }
+            val totalWeight = unblockedRays.sumOf { it.weight }.coerceAtLeast(1e-12)
+            val weightedMeanTheta = unblockedRays.sumOf { it.weight * atan(it.u) } / totalWeight
+            val weightedVariance = unblockedRays.sumOf { ray ->
+                val theta = atan(ray.u) - weightedMeanTheta
+                ray.weight * theta * theta
+            } / totalWeight
 
-            if (maxTheta < 1e-9) {
-                0.0
-            } else {
-                // Smooth local differential density p(theta) using a moving window deltaTheta to eliminate binning aliasing
-                val deltaTheta = max(1e-5, maxTheta * 0.15)
-                fun localDensity(t: Double): Double {
-                    val tLow = max(0.0, t - deltaTheta)
-                    val tHigh = t + deltaTheta
-                    val inWindow = unblockedRays.filter {
-                        val absT = abs(atan(it.u))
-                        absT >= tLow && absT <= tHigh
-                    }
-                    val weightInWindow = inWindow.sumOf { it.weight }
-                    val windowSpan = (tHigh - tLow).coerceAtLeast(1e-6)
-                    return weightInWindow / windowSpan
-                }
-
-                val peakDensity = localDensity(0.0).coerceAtLeast(1e-12)
-                val halfDensity = 0.5 * peakDensity
-
-                // Locate half-intensity angle theta_half where local differential density drops to 50% of peak
-                val sampleSteps = 50
-                var fwhmHalfAngle = maxTheta
-
-                for (s in 1..sampleSteps) {
-                    val tEval = (s.toDouble() / sampleSteps.toDouble()) * maxTheta
-                    val dEval = localDensity(tEval)
-
-                    if (dEval < halfDensity) {
-                        val tPrev = ((s - 1).toDouble() / sampleSteps.toDouble()) * maxTheta
-                        val dPrev = localDensity(tPrev)
-                        val frac = if (abs(dPrev - dEval) > 1e-12) {
-                            (dPrev - halfDensity) / (dPrev - dEval)
-                        } else 0.5
-                        fwhmHalfAngle = tPrev + frac * (tEval - tPrev)
-                        break
-                    }
-                }
-
-                (2.0 * fwhmHalfAngle * 180.0 / kotlin.math.PI).coerceAtLeast(0.0)
-            }
+            val rmsHalfAngleRad = sqrt(max(0.0, weightedVariance))
+            // FWHM full angle for radiometric ray distribution (2 * sqrt(2 * ln(2)) * sigma_rms)
+            val fwhmFullAngleRad = 2.0 * sqrt(2.0 * kotlin.math.ln(2.0)) * rmsHalfAngleRad
+            (fwhmFullAngleRad * 180.0 / kotlin.math.PI).coerceAtLeast(0.0)
         } else source.divergenceYDeg
 
-        // Spot size at detector screen
         val detectorZ = detectorAnalysisResult?.detectorZMm
             ?: (activeElements.firstOrNull { it.type == OpticalElementType.DETECTOR }?.positionZMm
                 ?: (activeElements.lastOrNull()?.positionZMm ?: 150.0))
         val spotSize = detectorAnalysisResult?.spotDiameterMm ?: calculateSpotSizeAtZ(segments, detectorZ)
 
-        // Spherical Aberration accumulated across all elements
         val sphericalAb = calculateSphericalAberration(activeElements)
 
         val netEfficiencyFraction = geometricCollectionFraction * fresnelTransmissionFraction
@@ -461,7 +623,6 @@ object AnalyticalOpticsEngine {
         val finalOpticalEfficiencyPct = (netEfficiencyFraction * 100.0).coerceIn(0.0, 100.0)
         val finalOutputPowerW = (source.opticalPowerW * netEfficiencyFraction)
 
-        // Radiometric Calculations: Power & Radiant Intensity
         val outputHalfRad = outputDivergenceDeg * kotlin.math.PI / 360.0
         val solidAngleSr = if (outputHalfRad > 0.0) {
             2.0 * kotlin.math.PI * (1.0 - cos(outputHalfRad))
@@ -474,7 +635,6 @@ object AnalyticalOpticsEngine {
             0.0
         }
 
-        // Determine system paraxial focal Z distance
         val effectiveFocalZ = lastWaistZMm ?: calculateSystemFocalZ(activeElements)
 
         return AnalyticalOpticsResult(
@@ -621,8 +781,8 @@ object AnalyticalOpticsEngine {
     }
 
     private fun calculateSystemFocalZ(elements: List<OpticalElement>): Double? {
-        var parallelRayY = 1.0
-        var parallelRayU = 0.0
+        var rayY = 1.0
+        var rayU = 0.0
         var currentZ = 0.0
 
         val lensElements = elements.filter {
@@ -630,18 +790,82 @@ object AnalyticalOpticsEngine {
         }
         if (lensElements.isEmpty()) return null
 
-        for ((_, _, _, positionZMm, _, f) in lensElements) {
-            val dz = positionZMm - currentZ
-            parallelRayY += parallelRayU * dz
-            currentZ = positionZMm
+        for (elem in lensElements) {
+            val thickness = elem.thicknessMm
+            val zElem = elem.positionZMm
+            val zFront = if (elem.type == OpticalElementType.PLANO_CONVEX) {
+                max(currentZ, zElem)
+            } else {
+                max(currentZ, zElem - thickness / 2.0)
+            }
+            val zBack = max(zFront + 0.01, zFront + thickness)
 
-            if (f != 0.0) {
-                parallelRayU -= parallelRayY / f
+            val dz = zFront - currentZ
+            rayY += rayU * dz
+            currentZ = zFront
+
+            if (elem.type == OpticalElementType.PARABOLIC_MIRROR) {
+                val f = elem.focalLengthMm
+                if (f != 0.0) {
+                    rayU -= rayY / f
+                }
+            } else {
+                val presc = getLensPrescription(elem)
+
+                // Refraction at Surface 1
+                if (presc.r1.isInfinite()) {
+                    rayU = rayU / presc.nGlass
+                } else {
+                    val powerCoeff = (presc.nGlass - 1.0) / (presc.nGlass * presc.r1)
+                    rayU = (rayU / presc.nGlass) - powerCoeff * rayY
+                }
+
+                if (!presc.isDoublet) {
+                    // Internal glass propagation
+                    val glassThickness = max(0.001, zBack - zFront)
+                    rayY += rayU * glassThickness
+                    currentZ = zBack
+
+                    // Refraction at Surface 2
+                    if (presc.r2.isInfinite()) {
+                        rayU = rayU * presc.nGlass
+                    } else {
+                        val powerCoeff = (1.0 - presc.nGlass) / (1.0 * presc.r2)
+                        rayU = (presc.nGlass * rayU) - powerCoeff * rayY
+                    }
+                } else {
+                    val totalT = max(0.001, zBack - zFront)
+                    val crownT = (presc.crownThickness).coerceIn(0.001, totalT - 0.001)
+                    val flintT = max(0.001, totalT - crownT)
+
+                    // Crown propagation
+                    rayY += rayU * crownT
+
+                    // Cemented interface
+                    if (!presc.rInt.isInfinite()) {
+                        val powerCoeff = (presc.nFlint - presc.nGlass) / (presc.nFlint * presc.rInt)
+                        rayU = (presc.nGlass / presc.nFlint) * rayU - powerCoeff * rayY
+                    } else {
+                        rayU = (presc.nGlass / presc.nFlint) * rayU
+                    }
+
+                    // Flint propagation
+                    rayY += rayU * flintT
+                    currentZ = zBack
+
+                    // Surface 3
+                    if (!presc.r2.isInfinite()) {
+                        val powerCoeff = (1.0 - presc.nFlint) / (1.0 * presc.r2)
+                        rayU = (presc.nFlint * rayU) - powerCoeff * rayY
+                    } else {
+                        rayU = rayU * presc.nFlint
+                    }
+                }
             }
         }
 
-        if (parallelRayU < 0.0) {
-            val dzToFocus = -parallelRayY / parallelRayU
+        if (rayU < 0.0) {
+            val dzToFocus = -rayY / rayU
             return currentZ + dzToFocus
         }
 
@@ -662,7 +886,12 @@ object AnalyticalOpticsEngine {
         elements: List<OpticalElement>
     ): Double {
         var totalLsa = 0.0
-        for ((_, _, type, _, clearApertureMm, f, _, material) in elements) {
+        for (elem in elements) {
+            val type = elem.type
+            val f = elem.focalLengthMm
+            val clearApertureMm = elem.clearApertureMm
+            val material = elem.material
+
             if (type == OpticalElementType.APERTURE_STOP || type == OpticalElementType.DETECTOR) continue
             if (f == 0.0) continue
 
@@ -670,10 +899,10 @@ object AnalyticalOpticsEngine {
             val yIn = clearApertureMm / 2.0
 
             val shapeFactor = when (type) {
-                OpticalElementType.PLANO_CONVEX -> 0.25
-                OpticalElementType.ACHROMATIC_DOUBLET -> 0.08
+                OpticalElementType.PLANO_CONVEX -> if (elem.isFlipped) 0.08 else 0.25
+                OpticalElementType.ACHROMATIC_DOUBLET -> 0.04
                 OpticalElementType.BICONVEX -> 0.35
-                OpticalElementType.PARABOLIC_MIRROR -> 0.02
+                OpticalElementType.PARABOLIC_MIRROR -> 0.01
                 OpticalElementType.APERTURE_STOP, OpticalElementType.DETECTOR -> 0.0
             }
 

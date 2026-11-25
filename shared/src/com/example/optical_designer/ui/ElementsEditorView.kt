@@ -619,6 +619,7 @@ private fun EditElementDialog(
     var material by remember { mutableStateOf(element.material) }
     var isCoated by remember { mutableStateOf(element.isCoated) }
     var customTrans by remember { mutableStateOf(element.customTransmissionPct) }
+    var isFlipped by remember { mutableStateOf(element.isFlipped) }
 
     var matDropdownExpanded by remember { mutableStateOf(false) }
 
@@ -694,6 +695,30 @@ private fun EditElementDialog(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
+                            Column {
+                                Text(
+                                    text = "Flip Lens Orientation",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    text = if (isFlipped) "Flipped (Flat face facing light)" else "Normal (Curved face facing light)",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = isFlipped,
+                                onCheckedChange = { isFlipped = it }
+                            )
+                        }
+                    }
+
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
                             Text(
                                 text = "AR Coating / Custom Transmission Override",
                                 style = MaterialTheme.typography.bodyMedium
@@ -742,7 +767,8 @@ private fun EditElementDialog(
                         clearApertureMm = aperture,
                         material = material,
                         isCoated = isCoated,
-                        customTransmissionPct = customTrans
+                        customTransmissionPct = customTrans,
+                        isFlipped = isFlipped
                     )
                 )
             }) { Text("Save") }
