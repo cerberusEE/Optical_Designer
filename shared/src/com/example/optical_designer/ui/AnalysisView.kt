@@ -381,6 +381,7 @@ fun AnalysisView(
                         AnalysisRow(
                             label = "Output Beam Divergence",
                             value = "${NumberFormatUtil.formatToDisplay(result.outputDivergenceDeg)}°",
+                            subtitle = "FWHM 50% intensity angle",
                             modifier = Modifier.weight(1f)
                         )
                     }

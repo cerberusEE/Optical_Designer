@@ -113,15 +113,15 @@ object AnalyticalOpticsEngine {
             OpticalElementType.PLANO_CONVEX -> {
                 val r = fAbs * (nd - 1.0)
                 if (f >= 0.0) {
-                    if (!elem.isFlipped) {
-                        // Normal orientation: Curved face facing left (R1 = +r > 0), flat back face facing right (R2 = inf)
+                    if (elem.orientation == com.example.optical_designer.model.LensOrientation.CURVED_FACE_LEFT) {
+                        // Curved face facing left at zFront (R1 = +r > 0), flat back face facing right at zBack (R2 = inf)
                         LensPrescription(
                             r1 = r,
                             r2 = Double.POSITIVE_INFINITY,
                             nGlass = nd
                         )
                     } else {
-                        // Flipped orientation: Flat face facing left (R1 = inf), convex back face facing right (R2 = -r < 0)
+                        // Flat face facing left at zFront (R1 = inf), convex back face facing right at zBack (R2 = -r < 0)
                         LensPrescription(
                             r1 = Double.POSITIVE_INFINITY,
                             r2 = -r,
@@ -130,15 +130,15 @@ object AnalyticalOpticsEngine {
                     }
                 } else {
                     // Negative focal length (Plano-Concave)
-                    if (!elem.isFlipped) {
-                        // Normal orientation: Concave face facing left (R1 = -r < 0), flat back face facing right (R2 = inf)
+                    if (elem.orientation == com.example.optical_designer.model.LensOrientation.CURVED_FACE_LEFT) {
+                        // Concave face facing left at zFront (R1 = -r < 0), flat back face facing right at zBack (R2 = inf)
                         LensPrescription(
                             r1 = -r,
                             r2 = Double.POSITIVE_INFINITY,
                             nGlass = nd
                         )
                     } else {
-                        // Flipped orientation: Flat face facing left (R1 = inf), concave back face facing right (R2 = +r > 0)
+                        // Flat face facing left at zFront (R1 = inf), concave back face facing right at zBack (R2 = +r > 0)
                         LensPrescription(
                             r1 = Double.POSITIVE_INFINITY,
                             r2 = r,
@@ -189,7 +189,7 @@ object AnalyticalOpticsEngine {
                 val crownT = thickness * 0.7
                 val flintT = thickness * 0.3
 
-                if (!elem.isFlipped) {
+                if (elem.orientation == com.example.optical_designer.model.LensOrientation.CURVED_FACE_LEFT) {
                     LensPrescription(
                         r1 = r1,
                         r2 = r2,
@@ -899,7 +899,7 @@ object AnalyticalOpticsEngine {
             val yIn = clearApertureMm / 2.0
 
             val shapeFactor = when (type) {
-                OpticalElementType.PLANO_CONVEX -> if (elem.isFlipped) 0.08 else 0.25
+                OpticalElementType.PLANO_CONVEX -> if (elem.orientation == com.example.optical_designer.model.LensOrientation.CURVED_FACE_LEFT) 0.08 else 0.25
                 OpticalElementType.ACHROMATIC_DOUBLET -> 0.04
                 OpticalElementType.BICONVEX -> 0.35
                 OpticalElementType.PARABOLIC_MIRROR -> 0.01

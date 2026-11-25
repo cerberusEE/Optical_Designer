@@ -154,6 +154,16 @@ enum class OpticalElementType(val displayName: String) {
     DETECTOR("Detector Screen")
 }
 
+enum class LensOrientation(val displayName: String) {
+    CURVED_FACE_LEFT("Curved Face Left"),
+    FLAT_FACE_LEFT("Flat Face Left");
+
+    companion object {
+        fun fromBoolean(isFlipped: Boolean): LensOrientation =
+            if (isFlipped) FLAT_FACE_LEFT else CURVED_FACE_LEFT
+    }
+}
+
 data class OpticalElement(
     val id: String,
     val name: String,
@@ -165,9 +175,12 @@ data class OpticalElement(
     val material: GlassMaterial = GlassMaterial.N_BK7,
     val isCoated: Boolean = false, // Checkbox for AR coated optics / custom transmission override
     val customTransmissionPct: Double = 99.0, // Manual transmission entry percentage when coated
-    val isFlipped: Boolean = false, // Orientation toggle (e.g. flat face vs curved face first)
+    val orientation: LensOrientation = LensOrientation.CURVED_FACE_LEFT, // Explicit lens surface orientation
     val enabled: Boolean = true
 ) {
+    /** Helper property for backward compatibility */
+    val isFlipped: Boolean
+        get() = orientation == LensOrientation.FLAT_FACE_LEFT
     /**
      * Calculates center thickness automatically assuming a spherical lens with given focal length, aperture, and glass refractive index.
      */

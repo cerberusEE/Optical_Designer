@@ -619,9 +619,10 @@ private fun EditElementDialog(
     var material by remember { mutableStateOf(element.material) }
     var isCoated by remember { mutableStateOf(element.isCoated) }
     var customTrans by remember { mutableStateOf(element.customTransmissionPct) }
-    var isFlipped by remember { mutableStateOf(element.isFlipped) }
+    var orientation by remember { mutableStateOf(element.orientation) }
 
     var matDropdownExpanded by remember { mutableStateOf(false) }
+    var orientDropdownExpanded by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -690,26 +691,34 @@ private fun EditElementDialog(
                     }
 
                     item {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                        ExposedDropdownMenuBox(
+                            expanded = orientDropdownExpanded,
+                            onExpandedChange = { orientDropdownExpanded = it }
                         ) {
-                            Column {
-                                Text(
-                                    text = "Flip Lens Orientation",
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                Text(
-                                    text = if (isFlipped) "Flipped (Flat face facing light)" else "Normal (Curved face facing light)",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = isFlipped,
-                                onCheckedChange = { isFlipped = it }
+                            OutlinedTextField(
+                                value = orientation.displayName,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Lens Surface Orientation") },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = orientDropdownExpanded) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
                             )
+                            ExposedDropdownMenu(
+                                expanded = orientDropdownExpanded,
+                                onDismissRequest = { orientDropdownExpanded = false }
+                            ) {
+                                for (orient in com.example.optical_designer.model.LensOrientation.entries) {
+                                    DropdownMenuItem(
+                                        text = { Text(orient.displayName) },
+                                        onClick = {
+                                            orientation = orient
+                                            orientDropdownExpanded = false
+                                        }
+                                    )
+                                }
+                            }
                         }
                     }
 
@@ -720,7 +729,7 @@ private fun EditElementDialog(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = "AR Coating / Custom Transmission Override",
+                                text = "AR Coating",
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Switch(
@@ -768,7 +777,7 @@ private fun EditElementDialog(
                         material = material,
                         isCoated = isCoated,
                         customTransmissionPct = customTrans,
-                        isFlipped = isFlipped
+                        orientation = orientation
                     )
                 )
             }) { Text("Save") }

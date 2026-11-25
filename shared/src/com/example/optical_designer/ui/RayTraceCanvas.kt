@@ -585,12 +585,12 @@ private fun DrawScope.drawOpticalElement(
     when (elem.type) {
         OpticalElementType.PLANO_CONVEX -> {
             val path = Path()
-            if (!elem.isFlipped) {
+            if (elem.orientation == com.example.optical_designer.model.LensOrientation.CURVED_FACE_LEFT) {
                 val targetApexZ = zX
                 val edgeZ = (zX + thickness - 2f).coerceAtLeast(targetApexZ + 1f)
                 val controlZ = 2f * targetApexZ - edgeZ
 
-                // Normal orientation: Convex front surface facing left at zX, flat back surface at zX + thickness
+                // Curved face facing left at zX, flat back surface facing right at zX + thickness
                 path.moveTo(zX + thickness, centerY - apertureHalf)
                 path.lineTo(zX + thickness, centerY + apertureHalf)
                 path.lineTo(edgeZ, centerY + apertureHalf)
@@ -604,7 +604,7 @@ private fun DrawScope.drawOpticalElement(
                 val edgeZ = (zX + 2f).coerceAtMost(targetApexZ - 1f)
                 val controlZ = 2f * targetApexZ - edgeZ
 
-                // Flipped orientation: Flat front surface at zX, convex back surface facing right
+                // Flat face facing left at zX, convex back surface facing right at zX + thickness
                 path.moveTo(zX, centerY - apertureHalf)
                 path.lineTo(zX, centerY + apertureHalf)
                 path.lineTo(edgeZ, centerY + apertureHalf)

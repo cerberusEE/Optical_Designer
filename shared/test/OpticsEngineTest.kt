@@ -488,23 +488,23 @@ class OpticsEngineTest {
             positionZMm = lensPositionZ,
             clearApertureMm = 30.0,
             focalLengthMm = focalLength,
-            isFlipped = false // Normal: Curved side facing incoming parallel light (left)
+            orientation = com.example.optical_designer.model.LensOrientation.FLAT_FACE_LEFT
         )
 
         val result = AnalyticalOpticsEngine.calculateSystem(source, listOf(pcLens))
 
-        // First segment is free-space propagation from source (Z=0) to curved front face (Z=lensPositionZ)
+        // First segment is free-space propagation from source (Z=0) to flat front face (Z=lensPositionZ)
         val firstSegment = result.beamSegments.first()
         assertTrue(
             abs(firstSegment.endZ - lensPositionZ) < 1e-4,
             "Plano-convex front face must be at specified position Z=$lensPositionZ mm"
         )
 
-        // For parallel light entering the curved side at Z=lensPositionZ, BFL = f - t/n. Focal point is at Z = lensPositionZ + thickness + BFL
-        val expectedFocusZ = lensPositionZ + pcLens.thicknessMm + (focalLength - pcLens.thicknessMm / pcLens.material.nd)
+        // For parallel light entering the flat side at Z=lensPositionZ, BFL = f. Focal point is at Z = lensPositionZ + thickness + f
+        val expectedFocusZ = lensPositionZ + pcLens.thicknessMm + focalLength
         assertTrue(
             abs(result.focalDistanceMm - expectedFocusZ) < 1e-4,
-            "Focal point for normal (curved-first) plano-convex lens must be at Z=$expectedFocusZ mm"
+            "Focal point for flat-first plano-convex lens must be at Z=$expectedFocusZ mm"
         )
     }
 
@@ -520,29 +520,29 @@ class OpticsEngineTest {
         )
         val lensPositionZ = 60.0
         val focalLength = 50.0
-        val pcLensNormal = OpticalElement(
-            id = "pc_lens_norm",
-            name = "Plano-Convex Lens Normal",
+        val pcLensFlatLeft = OpticalElement(
+            id = "pc_lens_flat",
+            name = "Plano-Convex Lens Flat Left",
             type = OpticalElementType.PLANO_CONVEX,
             positionZMm = lensPositionZ,
             clearApertureMm = 30.0,
             focalLengthMm = focalLength,
-            isFlipped = false // Curved side facing left (Normal)
+            orientation = com.example.optical_designer.model.LensOrientation.FLAT_FACE_LEFT
         )
-        val pcLensFlipped = pcLensNormal.copy(
-            id = "pc_lens_flip",
-            isFlipped = true // Flat side facing left (Flipped)
+        val pcLensCurvedLeft = pcLensFlatLeft.copy(
+            id = "pc_lens_curved",
+            orientation = com.example.optical_designer.model.LensOrientation.CURVED_FACE_LEFT
         )
 
-        val resultNormal = AnalyticalOpticsEngine.calculateSystem(source, listOf(pcLensNormal))
-        val resultFlipped = AnalyticalOpticsEngine.calculateSystem(source, listOf(pcLensFlipped))
+        val resultFlatLeft = AnalyticalOpticsEngine.calculateSystem(source, listOf(pcLensFlatLeft))
+        val resultCurvedLeft = AnalyticalOpticsEngine.calculateSystem(source, listOf(pcLensCurvedLeft))
 
-        // Curved side facing left (Normal): BFL = f - t/n. Focal Z = zFront + t + (f - t/n)
-        // Flat side facing left (Flipped): BFL = f. Focal Z = zFront + t + f
-        val shiftMm = pcLensNormal.thicknessMm / pcLensNormal.material.nd
+        // Flat side facing left: BFL = f. Focal Z = zFront + t + f
+        // Curved side facing left: BFL = f - t/n. Focal Z = zFront + t + (f - t/n)
+        val shiftMm = pcLensFlatLeft.thicknessMm / pcLensFlatLeft.material.nd
         assertTrue(
-            abs((resultFlipped.focalDistanceMm - resultNormal.focalDistanceMm) - shiftMm) < 1e-3,
-            "Flipping PCX lens orientation must shift Z focus position by t/n = $shiftMm mm, but shifted by ${resultFlipped.focalDistanceMm - resultNormal.focalDistanceMm} mm"
+            abs((resultFlatLeft.focalDistanceMm - resultCurvedLeft.focalDistanceMm) - shiftMm) < 1e-3,
+            "Flipping PCX lens orientation must shift Z focus position by t/n = $shiftMm mm, but shifted by ${resultFlatLeft.focalDistanceMm - resultCurvedLeft.focalDistanceMm} mm"
         )
     }
 

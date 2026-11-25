@@ -282,6 +282,7 @@ object ProjectJsonSerializer {
             "material" to glassMaterialToJsonObject(element.material),
             "isCoated" to JsonValue.JsonBoolean(element.isCoated),
             "customTransmissionPct" to JsonValue.JsonNumber(element.customTransmissionPct),
+            "orientation" to JsonValue.JsonString(element.orientation.name),
             "isFlipped" to JsonValue.JsonBoolean(element.isFlipped),
             "enabled" to JsonValue.JsonBoolean(element.enabled)
         )
@@ -358,6 +359,17 @@ object ProjectJsonSerializer {
         val matObj = obj.getObject("material")
         val material = if (matObj != null) parseGlassMaterial(matObj) else GlassMaterial.N_BK7
 
+        val orientStr = (obj.fields["orientation"] as? JsonValue.JsonString)?.value
+        val orientation = if (orientStr != null) {
+            try {
+                com.example.optical_designer.model.LensOrientation.valueOf(orientStr)
+            } catch (_: Exception) {
+                com.example.optical_designer.model.LensOrientation.fromBoolean(obj.getBoolean("isFlipped", false))
+            }
+        } else {
+            com.example.optical_designer.model.LensOrientation.fromBoolean(obj.getBoolean("isFlipped", false))
+        }
+
         return OpticalElement(
             id = obj.getString("id", generateUuid()),
             name = obj.getString("name", "Lens"),
@@ -369,7 +381,7 @@ object ProjectJsonSerializer {
             material = material,
             isCoated = obj.getBoolean("isCoated", false),
             customTransmissionPct = obj.getDouble("customTransmissionPct", 99.0),
-            isFlipped = obj.getBoolean("isFlipped", false),
+            orientation = orientation,
             enabled = obj.getBoolean("enabled", true)
         )
     }
