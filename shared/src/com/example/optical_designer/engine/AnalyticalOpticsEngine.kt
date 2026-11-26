@@ -33,7 +33,7 @@ data class DetectorAnalysisResult(
     val detectorName: String,
     val detectorZMm: Double,
     val detectorApertureMm: Double,
-    val spotDiameterMm: Double,
+    val spotDiameterMm: Double, // Reported EE90 spot diameter
     val landedPowerW: Double,
     val arrivingPowerW: Double,
     val opticalEfficiencyPct: Double,
@@ -43,7 +43,11 @@ data class DetectorAnalysisResult(
     val integratedIrradianceWm2: Double,
     val integratedIrradiancemWcm2: Double,
     val peakIrradianceWm2: Double,
-    val bestFocusZMm: Double? = null
+    val bestFocusZMm: Double? = null,
+    val ee50DiameterMm: Double = 0.0,
+    val ee80DiameterMm: Double = 0.0,
+    val ee90DiameterMm: Double = 0.0,
+    val ee95DiameterMm: Double = 0.0
 )
 
 data class AnalyticalOpticsResult(
@@ -55,14 +59,18 @@ data class AnalyticalOpticsResult(
     val reflectionLossPct: Double,
     val inputDivergenceDeg: Double,
     val outputDivergenceDeg: Double,
-    val spotDiameterAtDetectorMm: Double,
+    val spotDiameterAtDetectorMm: Double, // Reported EE90 spot diameter
     val focalDistanceMm: Double,
     val sphericalAberrationMm: Double,
     val sourcePowerW: Double = 1.0,
     val outputPowerW: Double = 0.24,
     val outputSolidAngleSr: Double = 0.0,
     val radiantIntensityWsr: Double = 0.0,
-    val detectorResult: DetectorAnalysisResult? = null
+    val detectorResult: DetectorAnalysisResult? = null,
+    val ee50DiameterMm: Double = 0.0,
+    val ee80DiameterMm: Double = 0.0,
+    val ee90DiameterMm: Double = 0.0,
+    val ee95DiameterMm: Double = 0.0
 )
 
 data class IrradianceAtRangeResult(
@@ -70,7 +78,10 @@ data class IrradianceAtRangeResult(
     val spotDiameterMm: Double,
     val spotAreaM2: Double,
     val irradianceWm2: Double,
-    val irradiancemWcm2: Double
+    val irradiancemWcm2: Double,
+    val ee50DiameterMm: Double = 0.0,
+    val ee80DiameterMm: Double = 0.0,
+    val ee90DiameterMm: Double = 0.0
 )
 
 /**
@@ -101,7 +112,53 @@ private data class LensPrescription(
     val flintThickness: Double = 0.0
 )
 
+private data class EncircledEnergyResult(
+    val ee50RadiusMm: Double,
+    val ee80RadiusMm: Double,
+    val ee90RadiusMm: Double,
+    val ee95RadiusMm: Double,
+    val ee90DiameterMm: Double,
+    val maxRadiusMm: Double
+)
+
 object AnalyticalOpticsEngine {
+
+    private fun calculateEncircledEnergy(bundle: List<OpticalRay>): EncircledEnergyResult {
+        val unblocked = bundle.filter { !it.isBlocked }
+        if (unblocked.isEmpty()) {
+            return EncircledEnergyResult(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        }
+
+        val sorted = unblocked.sortedBy { abs(it.y) }
+        val totalWeight = sorted.sumOf { it.weight }.coerceAtLeast(1e-12)
+
+        fun radiusAtFraction(fraction: Double): Double {
+            val targetWeight = totalWeight * fraction
+            var accum = 0.0
+            for (ray in sorted) {
+                accum += ray.weight
+                if (accum >= targetWeight) {
+                    return abs(ray.y)
+                }
+            }
+            return abs(sorted.last().y)
+        }
+
+        val r50 = radiusAtFraction(0.50)
+        val r80 = radiusAtFraction(0.80)
+        val r90 = radiusAtFraction(0.90)
+        val r95 = radiusAtFraction(0.95)
+        val rMax = abs(sorted.last().y)
+
+        return EncircledEnergyResult(
+            ee50RadiusMm = r50,
+            ee80RadiusMm = r80,
+            ee90RadiusMm = r90,
+            ee95RadiusMm = r95,
+            ee90DiameterMm = r90 * 2.0,
+            maxRadiusMm = rMax
+        )
+    }
 
     private fun getLensPrescription(elem: OpticalElement): LensPrescription {
         val f = elem.focalLengthMm
@@ -361,10 +418,9 @@ object AnalyticalOpticsEngine {
                 currentZ = zTarget
             }
 
-            // 2. DETECTOR Screen handling
+            // 2. DETECTOR Screen handling: Encircled Energy (EE90) spot size & robust irradiance
             if (elem.type == OpticalElementType.DETECTOR) {
-                val beamRadiusAtDet = getTopUnblockedRadius(rayBundle, 0.1)
-                val spotDiamMm = beamRadiusAtDet * 2.0
+                val ee = calculateEncircledEnergy(rayBundle)
                 val detRadiusMm = max(0.001, elem.clearApertureMm / 2.0)
 
                 val unblockedDetRays = rayBundle.filter { !it.isBlocked }
@@ -386,21 +442,23 @@ object AnalyticalOpticsEngine {
                 val encircledPowerPct = encircledPowerFraction * 100.0
                 val spilloverLossPct = 100.0 - encircledPowerPct
 
-                val spotRadiusOnDetM = min(detRadiusMm, beamRadiusAtDet) / 1000.0
-                val spotAreaM2 = kotlin.math.PI * spotRadiusOnDetM * spotRadiusOnDetM
-
-                val integratedIrradianceWm2 = if (spotAreaM2 > 0.0) landedPowerW / spotAreaM2 else 0.0
-                val integratedIrradiancemWcm2 = integratedIrradianceWm2 / 10.0
-
-                val centralRays = landedRays.filter { abs(it.y) <= 0.25 * max(1e-4, beamRadiusAtDet) }
-                val centralWeightFraction = centralRays.sumOf { it.weight }
-                val peakMultiplier = if (landedWeightFraction > 0.0 && beamRadiusAtDet > 0.0) {
-                    val centralAreaFraction = 0.0625 // (0.25)^2
-                    (centralWeightFraction / landedWeightFraction) / centralAreaFraction
-                } else 1.0
-                val peakIrradianceWm2 = integratedIrradianceWm2 * peakMultiplier
+                // Spot diameter reported as EE90 arriving spot diameter
+                val reportedSpotDiamMm = if (ee.ee90DiameterMm > 0.0) ee.ee90DiameterMm else getTopUnblockedRadius(rayBundle, 0.1) * 2.0
 
                 val detApertureAreaM2 = kotlin.math.PI * (detRadiusMm / 1000.0) * (detRadiusMm / 1000.0)
+
+                // Average Detector Irradiance: landed power integrated over circular detector screen area
+                val integratedIrradianceWm2 = if (detApertureAreaM2 > 0.0) landedPowerW / detApertureAreaM2 else 0.0
+                val integratedIrradiancemWcm2 = integratedIrradianceWm2 / 10.0
+
+                // Peak irradiance evaluated over central EE50 spot area
+                val ee50RadiusM = max(1e-6, min(detRadiusMm, ee.ee50RadiusMm)) / 1000.0
+                val ee50AreaM2 = kotlin.math.PI * ee50RadiusM * ee50RadiusM
+                val powerInEE50W = landedPowerW * 0.50
+                val peakIrradianceWm2 = if (ee50AreaM2 > 0.0) powerInEE50W / ee50AreaM2 else integratedIrradianceWm2
+
+                val spotRadiusOnDetM = min(detRadiusMm, ee.ee90RadiusMm.coerceAtLeast(0.001)) / 1000.0
+                val spotAreaM2 = kotlin.math.PI * spotRadiusOnDetM * spotRadiusOnDetM
                 val apertureFillPct = if (detApertureAreaM2 > 0.0) {
                     ((spotAreaM2 / detApertureAreaM2) * 100.0).coerceIn(0.0, 100.0)
                 } else 0.0
@@ -411,7 +469,7 @@ object AnalyticalOpticsEngine {
                     detectorName = elem.name,
                     detectorZMm = elem.positionZMm,
                     detectorApertureMm = elem.clearApertureMm,
-                    spotDiameterMm = spotDiamMm,
+                    spotDiameterMm = reportedSpotDiamMm,
                     landedPowerW = landedPowerW,
                     arrivingPowerW = arrivingPowerW,
                     opticalEfficiencyPct = detOpticalEfficiencyPct,
@@ -421,7 +479,11 @@ object AnalyticalOpticsEngine {
                     integratedIrradianceWm2 = integratedIrradianceWm2,
                     integratedIrradiancemWcm2 = integratedIrradiancemWcm2,
                     peakIrradianceWm2 = peakIrradianceWm2,
-                    bestFocusZMm = effectiveFocusZ
+                    bestFocusZMm = effectiveFocusZ,
+                    ee50DiameterMm = ee.ee50RadiusMm * 2.0,
+                    ee80DiameterMm = ee.ee80RadiusMm * 2.0,
+                    ee90DiameterMm = ee.ee90DiameterMm,
+                    ee95DiameterMm = ee.ee95RadiusMm * 2.0
                 )
 
                 break
@@ -520,16 +582,16 @@ object AnalyticalOpticsEngine {
 
                     fresnelTransmissionFraction *= elem.effectiveTransmissionFraction
 
-                    // Track focal waist Z for metrics if rays are converging
+                    // Track minimum RMS spot size focal waist Z across all surviving rays
                     val unblocked = rayBundle.filter { !it.isBlocked }
-                    val axialRays = unblocked.filter { abs(it.y0) < 1e-5 }
-                    val candidateRays = axialRays.ifEmpty { unblocked }
-                    val convergingRay = candidateRays.firstOrNull { it.y > 0 && it.u < 0 }
-                    if (convergingRay != null) {
-                        val dzWaist = -convergingRay.y / convergingRay.u
-                        val waistZ = zBack + dzWaist
-                        if (waistZ > zBack) {
-                            lastWaistZMm = waistZ
+                    if (unblocked.isNotEmpty()) {
+                        val sumYU = unblocked.sumOf { it.weight * it.y * it.u }
+                        val sumU2 = unblocked.sumOf { it.weight * it.u * it.u }
+                        if (sumU2 > 1e-12 && sumYU < 0.0) {
+                            val dzWaist = -sumYU / sumU2
+                            if (dzWaist > 0.0) {
+                                lastWaistZMm = zBack + dzWaist
+                            }
                         }
                     }
 
@@ -547,14 +609,14 @@ object AnalyticalOpticsEngine {
                     fresnelTransmissionFraction *= elem.effectiveTransmissionFraction
 
                     val unblocked = rayBundle.filter { !it.isBlocked }
-                    val axialRays = unblocked.filter { abs(it.y0) < 1e-5 }
-                    val candidateRays = axialRays.ifEmpty { unblocked }
-                    val convergingRay = candidateRays.firstOrNull { it.y > 0 && it.u < 0 }
-                    if (convergingRay != null) {
-                        val dzWaist = -convergingRay.y / convergingRay.u
-                        val waistZ = currentZ + dzWaist
-                        if (waistZ > currentZ) {
-                            lastWaistZMm = waistZ
+                    if (unblocked.isNotEmpty()) {
+                        val sumYU = unblocked.sumOf { it.weight * it.y * it.u }
+                        val sumU2 = unblocked.sumOf { it.weight * it.u * it.u }
+                        if (sumU2 > 1e-12 && sumYU < 0.0) {
+                            val dzWaist = -sumYU / sumU2
+                            if (dzWaist > 0.0) {
+                                lastWaistZMm = currentZ + dzWaist
+                            }
                         }
                     }
                 }
@@ -637,6 +699,8 @@ object AnalyticalOpticsEngine {
 
         val effectiveFocalZ = lastWaistZMm ?: calculateSystemFocalZ(activeElements)
 
+        val finalEE = calculateEncircledEnergy(rayBundle)
+
         return AnalyticalOpticsResult(
             beamSegments = segments,
             opticalEfficiencyPct = finalOpticalEfficiencyPct,
@@ -653,7 +717,11 @@ object AnalyticalOpticsEngine {
             outputPowerW = finalOutputPowerW,
             outputSolidAngleSr = solidAngleSr,
             radiantIntensityWsr = radiantIntensityWsr,
-            detectorResult = detectorAnalysisResult
+            detectorResult = detectorAnalysisResult,
+            ee50DiameterMm = finalEE.ee50RadiusMm * 2.0,
+            ee80DiameterMm = finalEE.ee80RadiusMm * 2.0,
+            ee90DiameterMm = finalEE.ee90DiameterMm,
+            ee95DiameterMm = finalEE.ee95RadiusMm * 2.0
         )
     }
 
@@ -671,12 +739,19 @@ object AnalyticalOpticsEngine {
             0.0
         }
 
+        val ee90Diam = if (result.ee90DiameterMm > 0.0) result.ee90DiameterMm else spotDiamMm
+        val ee80Diam = if (result.ee80DiameterMm > 0.0) result.ee80DiameterMm else spotDiamMm * 0.89
+        val ee50Diam = if (result.ee50DiameterMm > 0.0) result.ee50DiameterMm else spotDiamMm * 0.59
+
         return IrradianceAtRangeResult(
             targetZMm = targetZMm,
             spotDiameterMm = spotDiamMm,
             spotAreaM2 = areaM2,
             irradianceWm2 = irradianceWm2,
-            irradiancemWcm2 = irradianceWm2 / 10.0
+            irradiancemWcm2 = irradianceWm2 / 10.0,
+            ee50DiameterMm = ee50Diam,
+            ee80DiameterMm = ee80Diam,
+            ee90DiameterMm = ee90Diam
         )
     }
 

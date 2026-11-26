@@ -136,10 +136,10 @@ fun AnalysisView(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             AnalysisRow(
-                                label = "Integrated Irradiance on Detector",
+                                label = "Average Irradiance",
                                 value = NumberFormatUtil.formatIrradiance(detResult.integratedIrradianceWm2),
-                                subtitle = "Power density integrated over circular screen",
-                                modifier = Modifier.weight(1.5f)
+                                subtitle = "Landed power density over detector area",
+                                modifier = Modifier.weight(1f)
                             )
                             AnalysisRow(
                                 label = "Encircled Power",
@@ -155,12 +155,6 @@ fun AnalysisView(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            AnalysisRow(
-                                label = "Beam Spot Diameter",
-                                value = NumberFormatUtil.formatDistanceUnit(detResult.spotDiameterMm),
-                                subtitle = "Arriving at Z = ${NumberFormatUtil.formatToDisplay(detResult.detectorZMm / 1000.0, 3)} m",
-                                modifier = Modifier.weight(1f)
-                            )
                             AnalysisRow(
                                 label = "Screen Circular Aperture Ø",
                                 value = NumberFormatUtil.formatDistanceUnit(detResult.detectorApertureMm),
@@ -215,6 +209,57 @@ fun AnalysisView(
                                 .height(8.dp),
                             color = if (result.opticalEfficiencyPct > 70) Color(0xFF2E7D32) else Color(0xFFD84315)
                         )
+                    }
+                }
+            }
+        }
+
+        // --- Beam Performance Card ---
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Beam Performance",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        AnalysisRow(
+                            label = "Source Divergence",
+                            value = "${NumberFormatUtil.formatToDisplay(source.divergenceYDeg)}°",
+                            modifier = Modifier.weight(1f)
+                        )
+                        AnalysisRow(
+                            label = "Output Beam Divergence",
+                            value = "${NumberFormatUtil.formatToDisplay(result.outputDivergenceDeg)}°",
+                            subtitle = "FWHM 50% intensity angle",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    detResult?.bestFocusZMm?.let { bestZ ->
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            AnalysisRow(
+                                label = "Paraxial Focal Z",
+                                value = "${NumberFormatUtil.formatToDisplay(bestZ / 1000.0, 3)} m",
+                                subtitle = "Optimal focus distance",
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
                     }
                 }
             }
@@ -278,9 +323,29 @@ fun AnalysisView(
                             modifier = Modifier.weight(1.5f)
                         )
                         AnalysisRow(
-                            label = "Spot Diameter",
+                            label = "EE90 Spot Diameter",
                             value = NumberFormatUtil.formatDistanceUnit(irradianceAtRange.spotDiameterMm),
                             subtitle = "Area: ${NumberFormatUtil.formatToDisplay(irradianceAtRange.spotAreaM2, 3)} m²",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        AnalysisRow(
+                            label = "EE50 Spot Diameter",
+                            value = NumberFormatUtil.formatDistanceUnit(irradianceAtRange.ee50DiameterMm),
+                            subtitle = "50% power encircled radius",
+                            modifier = Modifier.weight(1f)
+                        )
+                        AnalysisRow(
+                            label = "EE80 Spot Diameter",
+                            value = NumberFormatUtil.formatDistanceUnit(irradianceAtRange.ee80DiameterMm),
+                            subtitle = "80% power encircled radius",
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -346,71 +411,6 @@ fun AnalysisView(
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
                         text = getEfficiencyGuidance(result),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-
-        // --- Beam & Aberration Performance Card ---
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Beam & Aberration Performance",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        AnalysisRow(
-                            label = "Source Divergence",
-                            value = "${NumberFormatUtil.formatToDisplay(source.divergenceYDeg)}°",
-                            modifier = Modifier.weight(1f)
-                        )
-                        AnalysisRow(
-                            label = "Output Beam Divergence",
-                            value = "${NumberFormatUtil.formatToDisplay(result.outputDivergenceDeg)}°",
-                            subtitle = "FWHM 50% intensity angle",
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        AnalysisRow(
-                            label = "Spherical Aberration",
-                            value = "${NumberFormatUtil.formatToDisplay(result.sphericalAberrationMm)} mm",
-                            subtitle = "Marginal vs Paraxial focal shift",
-                            modifier = Modifier.weight(1f)
-                        )
-                        detResult?.bestFocusZMm?.let { bestZ ->
-                            AnalysisRow(
-                                label = "Paraxial Focal Z",
-                                value = "${NumberFormatUtil.formatToDisplay(bestZ / 1000.0, 3)} m",
-                                subtitle = "Optimal focus distance",
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = getAberrationGuidance(result),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -526,14 +526,5 @@ private fun getEfficiencyGuidance(result: AnalyticalOpticsResult): String {
             "Moderate clipping detected (${NumberFormatUtil.formatToDisplay(result.croppedLossPct)}% lost). Increasing lens aperture will improve efficiency."
         else ->
             "Geometric collection is high. Remaining loss (${NumberFormatUtil.formatToDisplay(result.reflectionLossPct)}%) is due to glass surface reflections."
-    }
-}
-
-private fun getAberrationGuidance(result: AnalyticalOpticsResult): String {
-    return when {
-        result.sphericalAberrationMm > 2.0 ->
-            "Significant spherical aberration detected (${NumberFormatUtil.formatToDisplay(result.sphericalAberrationMm)} mm shift). Consider reducing lens clear aperture / adding an aperture stop or using a doublet / parabolic mirror."
-        else ->
-            "System optical efficiency and beam profile are optimal."
     }
 }

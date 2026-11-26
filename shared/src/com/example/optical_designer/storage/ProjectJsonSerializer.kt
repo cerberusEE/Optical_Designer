@@ -311,11 +311,11 @@ object ProjectJsonSerializer {
         val name = obj.getString("name", "Untitled Project")
         val updatedAt = obj.getLong("updatedAt", currentTimeMillis())
         val sourceObj = obj.getObject("source")
-        val source = if (sourceObj != null) parseLightSource(sourceObj) else OpticalPresets.LED_COLLIMATOR.source
+        val source = if (sourceObj != null) parseLightSource(sourceObj) else OpticalPresets.LED_COLLIMATOR_1.source
         val elementsArray = obj.getArray("elements")
         val elements = elementsArray?.items?.mapNotNull {
             if (it is JsonValue.JsonObject) parseOpticalElement(it) else null
-        } ?: OpticalPresets.LED_COLLIMATOR.elements
+        } ?: OpticalPresets.LED_COLLIMATOR_1.elements
 
         return OpticalProject(
             id = id,

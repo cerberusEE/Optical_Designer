@@ -15,19 +15,16 @@ import kotlin.test.assertTrue
 class OpticsEngineTest {
 
     @Test
-    fun `test default LED collimator efficiency with planar front surface at Z=50mm`() {
-        val preset = OpticalPresets.LED_COLLIMATOR
+    fun `test default LED collimator 1 efficiency at focal distance`() {
+        val preset = OpticalPresets.LED_COLLIMATOR_1
         val result = AnalyticalOpticsEngine.calculateSystem(preset.source, preset.elements)
 
-        // Plano-convex lens flat front surface at z = 50mm.
-        // Beam radius at flat surface = 0.5mm + 50mm * tan(30°) ≈ 29.37mm.
-        // Radiometric Lambertian collection efficiency ≈ 31.77%
-        // Fresnel & internal transmission (N-BK7) ≈ 91.26%
-        // Net efficiency = 31.77% * 91.26% ≈ 29.0%
-        val expectedEfficiencyPct = 29.0
+        // Plano-convex lens flat front surface at z = 17.75mm.
+        // High collection efficiency near source ≈ 91.3%
+        val expectedEfficiencyPct = 91.3
         assertTrue(
             abs(result.opticalEfficiencyPct - expectedEfficiencyPct) < 2.0,
-            "Default setup efficiency should be ~29.0%, but was ${result.opticalEfficiencyPct}%"
+            "Default setup efficiency should be ~91.3%, but was ${result.opticalEfficiencyPct}%"
         )
     }
 
@@ -189,10 +186,38 @@ class OpticsEngineTest {
 
     @Test
     fun `test light propagation terminates at detector screen`() {
-        val preset = OpticalPresets.LIGHT_COLLECTING_DETECTOR
-        val result = AnalyticalOpticsEngine.calculateSystem(preset.source, preset.elements)
+        val detectorSource = LightSource(
+            name = "520nm Source",
+            sourceType = SourceType.LED,
+            cwlNm = 520.0,
+            opticalPowerW = 1.0,
+            divergenceXDeg = 40.0,
+            divergenceYDeg = 40.0,
+            emitterWidthMm = 1.0,
+            emitterHeightMm = 1.0,
+            positionZMm = 0.0
+        )
+        val detectorElements = listOf(
+            OpticalElement(
+                id = "collector_lens",
+                name = "Collector Lens",
+                type = OpticalElementType.PLANO_CONVEX,
+                positionZMm = 50.0,
+                clearApertureMm = 40.0,
+                focalLengthMm = 60.0,
+                material = GlassMaterial.N_BK7
+            ),
+            OpticalElement(
+                id = "detector_screen",
+                name = "Detector Screen",
+                type = OpticalElementType.DETECTOR,
+                positionZMm = 110.0,
+                clearApertureMm = 12.0
+            )
+        )
+        val result = AnalyticalOpticsEngine.calculateSystem(detectorSource, detectorElements)
 
-        val detectorZ = preset.elements.first { it.type == OpticalElementType.DETECTOR }.positionZMm
+        val detectorZ = detectorElements.first { it.type == OpticalElementType.DETECTOR }.positionZMm
         val lastSegment = result.beamSegments.last()
 
         assertTrue(
@@ -204,8 +229,36 @@ class OpticsEngineTest {
 
     @Test
     fun `test detector screen optical efficiency and integrated irradiance`() {
-        val preset = OpticalPresets.LIGHT_COLLECTING_DETECTOR
-        val result = AnalyticalOpticsEngine.calculateSystem(preset.source, preset.elements)
+        val detectorSource = LightSource(
+            name = "520nm Source",
+            sourceType = SourceType.LED,
+            cwlNm = 520.0,
+            opticalPowerW = 1.0,
+            divergenceXDeg = 40.0,
+            divergenceYDeg = 40.0,
+            emitterWidthMm = 1.0,
+            emitterHeightMm = 1.0,
+            positionZMm = 0.0
+        )
+        val detectorElements = listOf(
+            OpticalElement(
+                id = "collector_lens",
+                name = "Collector Lens",
+                type = OpticalElementType.PLANO_CONVEX,
+                positionZMm = 50.0,
+                clearApertureMm = 40.0,
+                focalLengthMm = 60.0,
+                material = GlassMaterial.N_BK7
+            ),
+            OpticalElement(
+                id = "detector_screen",
+                name = "Detector Screen",
+                type = OpticalElementType.DETECTOR,
+                positionZMm = 110.0,
+                clearApertureMm = 12.0
+            )
+        )
+        val result = AnalyticalOpticsEngine.calculateSystem(detectorSource, detectorElements)
 
         val detRes = result.detectorResult!!
         assertTrue(detRes.landedPowerW > 0.0, "Landed power on detector screen should be > 0")

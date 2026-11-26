@@ -23,8 +23,8 @@ class ProjectRepositoryTest {
         val customProject = OpticalProject(
             id = "test_custom_active",
             name = "My Custom Laser System",
-            source = OpticalPresets.BEAM_EXPANDER.source,
-            elements = OpticalPresets.BEAM_EXPANDER.elements
+            source = OpticalPresets.LED_COLLIMATOR_2.source,
+            elements = OpticalPresets.LED_COLLIMATOR_2.elements
         )
 
         ProjectRepository.saveActiveProject(customProject)
@@ -32,7 +32,7 @@ class ProjectRepositoryTest {
 
         assertEquals("test_custom_active", loaded.id)
         assertEquals("My Custom Laser System", loaded.name)
-        assertEquals(OpticalPresets.BEAM_EXPANDER.elements.size, loaded.elements.size)
+        assertEquals(OpticalPresets.LED_COLLIMATOR_2.elements.size, loaded.elements.size)
     }
 
     @Test
@@ -40,14 +40,14 @@ class ProjectRepositoryTest {
         val proj1 = OpticalProject(
             id = "lib_p1",
             name = "Collimator Design 1",
-            source = OpticalPresets.LED_COLLIMATOR.source,
-            elements = OpticalPresets.LED_COLLIMATOR.elements
+            source = OpticalPresets.LED_COLLIMATOR_1.source,
+            elements = OpticalPresets.LED_COLLIMATOR_1.elements
         )
         val proj2 = OpticalProject(
             id = "lib_p2",
             name = "Beam Expander Design 2",
-            source = OpticalPresets.BEAM_EXPANDER.source,
-            elements = OpticalPresets.BEAM_EXPANDER.elements
+            source = OpticalPresets.LED_COLLIMATOR_2.source,
+            elements = OpticalPresets.LED_COLLIMATOR_2.elements
         )
 
         // Save proj1 to library

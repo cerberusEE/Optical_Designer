@@ -8,6 +8,6 @@ data class OpticalProject(
     val id: String = generateUuid(),
     val name: String = "Untitled Project",
     val updatedAt: Long = currentTimeMillis(),
-    val source: LightSource = OpticalPresets.LED_COLLIMATOR.source,
-    val elements: List<OpticalElement> = OpticalPresets.LED_COLLIMATOR.elements
+    val source: LightSource = OpticalPresets.LED_COLLIMATOR_1.source,
+    val elements: List<OpticalElement> = OpticalPresets.LED_COLLIMATOR_1.elements
 )

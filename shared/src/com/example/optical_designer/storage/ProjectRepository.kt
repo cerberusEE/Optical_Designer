@@ -19,7 +19,7 @@ object ProjectRepository {
             if (project != null) return project
         }
         // Default initial project if none saved
-        val defaultPreset = OpticalPresets.LED_COLLIMATOR
+        val defaultPreset = OpticalPresets.LED_COLLIMATOR_1
         val initialProject = OpticalProject(
             id = "proj_default_led_collimator",
             name = defaultPreset.name,
@@ -71,7 +71,7 @@ object ProjectRepository {
     }
 
     fun createNewProject(name: String = "New Optical Project", preset: OpticalPreset? = null): OpticalProject {
-        val template = preset ?: OpticalPresets.LED_COLLIMATOR
+        val template = preset ?: OpticalPresets.LED_COLLIMATOR_1
         val newProject = OpticalProject(
             id = generateUuid(),
             name = name.ifBlank { "New Optical Project" },

@@ -77,14 +77,14 @@ class ProjectSerializationTest {
         val project1 = OpticalProject(
             id = "p1",
             name = "Preset 1 Project",
-            source = OpticalPresets.LED_COLLIMATOR.source,
-            elements = OpticalPresets.LED_COLLIMATOR.elements
+            source = OpticalPresets.LED_COLLIMATOR_1.source,
+            elements = OpticalPresets.LED_COLLIMATOR_1.elements
         )
         val project2 = OpticalProject(
             id = "p2",
             name = "Preset 2 Project",
-            source = OpticalPresets.BEAM_EXPANDER.source,
-            elements = OpticalPresets.BEAM_EXPANDER.elements
+            source = OpticalPresets.LED_COLLIMATOR_2.source,
+            elements = OpticalPresets.LED_COLLIMATOR_2.elements
         )
 
         val projects = listOf(project1, project2)

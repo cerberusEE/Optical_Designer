@@ -179,7 +179,7 @@ fun RayTraceView(
                         modifier = Modifier.weight(1f)
                     )
                     MetricItem(
-                        label = "Spot Size",
+                        label = "Spot Size (EE90)",
                         value = NumberFormatUtil.formatDistanceUnit(opticsResult.spotDiameterAtDetectorMm),
                         color = MaterialTheme.colorScheme.secondary,
                         modifier = Modifier.weight(1f)
