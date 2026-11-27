@@ -639,38 +639,6 @@ private fun DrawScope.drawOpticalElement(
             drawPath(path = path, color = glassStrokeColor, style = Stroke(width = 2f))
         }
 
-        OpticalElementType.ACHROMATIC_DOUBLET -> {
-            val leftZ = zX - thickness / 2f
-            val rightZ = zX + thickness / 2f
-
-            val crownPath = Path().apply {
-                moveTo(leftZ, centerY - apertureHalf)
-                lineTo(leftZ, centerY + apertureHalf)
-                lineTo(zX, centerY + apertureHalf)
-                quadraticTo(zX + thickness / 2f, centerY, zX, centerY - apertureHalf)
-                close()
-            }
-
-            val flintPath = Path().apply {
-                moveTo(zX, centerY - apertureHalf)
-                quadraticTo(zX + thickness / 2f, centerY, zX, centerY + apertureHalf)
-                lineTo(rightZ, centerY + apertureHalf)
-                quadraticTo(rightZ - thickness / 1.5f, centerY, rightZ, centerY - apertureHalf)
-                close()
-            }
-
-            val crownFill = if (isDarkTheme) Color(0x6681D4FA) else Color(0x330288D1)
-            val crownStroke = if (isDarkTheme) Color(0xFF4FC3F7) else Color(0xFF0288D1)
-            val flintFill = if (isDarkTheme) Color(0x66B388FF) else Color(0x33673AB7)
-            val flintStroke = if (isDarkTheme) Color(0xFFD1C4E9) else Color(0xFF673AB7)
-
-            drawPath(path = crownPath, color = crownFill)
-            drawPath(path = crownPath, color = crownStroke, style = Stroke(width = 1.5f))
-
-            drawPath(path = flintPath, color = flintFill)
-            drawPath(path = flintPath, color = flintStroke, style = Stroke(width = 1.5f))
-        }
-
         OpticalElementType.PARABOLIC_MIRROR -> {
             val path = Path()
             val controlZ = zX - thickness

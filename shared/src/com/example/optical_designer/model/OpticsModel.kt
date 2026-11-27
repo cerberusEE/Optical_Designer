@@ -148,7 +148,6 @@ data class LightSource(
 enum class OpticalElementType(val displayName: String) {
     PLANO_CONVEX("Plano-Convex Lens"),
     BICONVEX("Biconvex Lens"),
-    ACHROMATIC_DOUBLET("Achromatic Doublet"),
     PARABOLIC_MIRROR("Parabolic Mirror"),
     APERTURE_STOP("Aperture Stop / Iris"),
     DETECTOR("Detector Screen")
@@ -234,16 +233,6 @@ fun calculateLensThickness(
                 val effectiveR = max(r, y * 1.001)
                 val sag = effectiveR - sqrt(effectiveR * effectiveR - y * y)
                 (2.0 * sag + minEdgeThicknessMm).coerceIn(1.0, 100.0)
-            }
-        }
-        OpticalElementType.ACHROMATIC_DOUBLET -> {
-            if (focalLengthMm <= 0.0 || nd <= 1.0) {
-                minEdgeThicknessMm * 2.0
-            } else {
-                val r = 2.0 * abs(focalLengthMm) * (nd - 1.0)
-                val effectiveR = max(r, y * 1.001)
-                val sag = effectiveR - sqrt(effectiveR * effectiveR - y * y)
-                (2.0 * sag + minEdgeThicknessMm * 1.5).coerceIn(2.0, 100.0)
             }
         }
         OpticalElementType.PARABOLIC_MIRROR -> 5.0

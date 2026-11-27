@@ -793,7 +793,6 @@ private fun createDefaultElement(type: OpticalElementType): OpticalElement {
     return when (type) {
         OpticalElementType.PLANO_CONVEX -> OpticalElement(id, "Plano-Convex Lens", type, 60.0, 30.0, 50.0)
         OpticalElementType.BICONVEX -> OpticalElement(id, "Biconvex Lens", type, 60.0, 30.0, 50.0)
-        OpticalElementType.ACHROMATIC_DOUBLET -> OpticalElement(id, "Achromatic Doublet", type, 60.0, 35.0, 60.0)
         OpticalElementType.PARABOLIC_MIRROR -> OpticalElement(id, "Parabolic Mirror", type, 50.0, 40.0, 50.0)
         OpticalElementType.APERTURE_STOP -> OpticalElement(id, "Iris Aperture", type, 40.0, 15.0, 0.0)
         OpticalElementType.DETECTOR -> OpticalElement(id, "Detector Screen", type, 180.0, 50.0, 0.0)

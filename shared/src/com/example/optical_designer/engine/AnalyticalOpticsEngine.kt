@@ -70,7 +70,9 @@ data class AnalyticalOpticsResult(
     val ee50DiameterMm: Double = 0.0,
     val ee80DiameterMm: Double = 0.0,
     val ee90DiameterMm: Double = 0.0,
-    val ee95DiameterMm: Double = 0.0
+    val ee95DiameterMm: Double = 0.0,
+    val exitZMm: Double = 0.0,
+    val finalRays: List<OpticalRay> = emptyList()
 )
 
 data class IrradianceAtRangeResult(
@@ -91,7 +93,7 @@ data class IrradianceAtRangeResult(
  * @param y0 Initial source origin height in mm
  * @param isBlocked Whether this ray has been clipped/blocked by an aperture stop
  */
-private data class OpticalRay(
+data class OpticalRay(
     var y: Double,
     var u: Double,
     val y0: Double,
@@ -135,10 +137,10 @@ object AnalyticalOpticsEngine {
         fun radiusAtFraction(fraction: Double): Double {
             val targetWeight = totalWeight * fraction
             var accum = 0.0
-            for (ray in sorted) {
-                accum += ray.weight
+            for ((y, _, _, weight) in sorted) {
+                accum += weight
                 if (accum >= targetWeight) {
-                    return abs(ray.y)
+                    return abs(y)
                 }
             }
             return abs(sorted.last().y)
@@ -227,49 +229,6 @@ object AnalyticalOpticsEngine {
                     )
                 }
             }
-            OpticalElementType.ACHROMATIC_DOUBLET -> {
-                val v1 = elem.material.vd
-                val flintMaterial = if (elem.material.name.contains("F2")) GlassMaterial.N_BK7 else GlassMaterial.F2
-                val v2 = flintMaterial.vd
-                val n2 = flintMaterial.nd
-
-                val pNet = if (f != 0.0) 1.0 / f else 0.0
-                val vDiff = max(1.0, v1 - v2)
-                val p1 = pNet * (v1 / vDiff)
-                val p2 = -pNet * (v2 / vDiff)
-
-                val r1 = if (p1 != 0.0) 2.0 * (nd - 1.0) / p1 else 2.0 * fAbs * (nd - 1.0)
-                val rInt = -r1
-                val invR2 = (1.0 / rInt) - (p2 / (n2 - 1.0))
-                val r2 = if (invR2 != 0.0) 1.0 / invR2 else -r1 * 2.5
-
-                val crownT = thickness * 0.7
-                val flintT = thickness * 0.3
-
-                if (elem.orientation == com.example.optical_designer.model.LensOrientation.CURVED_FACE_LEFT) {
-                    LensPrescription(
-                        r1 = r1,
-                        r2 = r2,
-                        nGlass = nd,
-                        isDoublet = true,
-                        rInt = rInt,
-                        nFlint = n2,
-                        crownThickness = crownT,
-                        flintThickness = flintT
-                    )
-                } else {
-                    LensPrescription(
-                        r1 = -r2,
-                        r2 = -r1,
-                        nGlass = n2,
-                        isDoublet = true,
-                        rInt = -rInt,
-                        nFlint = nd,
-                        crownThickness = flintT,
-                        flintThickness = crownT
-                    )
-                }
-            }
             OpticalElementType.PARABOLIC_MIRROR,
             OpticalElementType.APERTURE_STOP,
             OpticalElementType.DETECTOR -> {
@@ -283,30 +242,64 @@ object AnalyticalOpticsEngine {
     }
 
     /**
-     * High-precision Error Function erf(x) via Abramowitz & Stegun 7.1.26.
-     * Maximum absolute numerical error < 1.5e-7 across all real numbers.
+     * Exact piecewise-linear sub-bin ray interpolation for aperture power collection.
+     * Conserves energy strictly while eliminating discretization quantization artifacts.
      */
-    private fun erf(x: Double): Double {
-        val sign = if (x < 0.0) -1.0 else 1.0
-        val absX = abs(x)
-        if (absX > 4.0) return sign * 1.0
-        val p = 0.3275911
-        val a1 = 0.254829592
-        val a2 = -0.284496736
-        val a3 = 1.421413741
-        val a4 = -1.453152027
-        val a5 = 1.061405429
-        val t = 1.0 / (1.0 + p * absX)
-        val poly = t * (a1 + t * (a2 + t * (a3 + t * (a4 + t * a5))))
-        val y = 1.0 - poly * kotlin.math.exp(-absX * absX)
-        return sign * y
+    private fun aperturePowerFraction(
+        rays: List<OpticalRay>,
+        radiusMm: Double
+    ): Double {
+        val sorted = rays.filter { !it.isBlocked }.sortedBy { abs(it.y) }
+        var power = 0.0
+
+        for (i in sorted.indices) {
+            val r = abs(sorted[i].y)
+            if (r <= radiusMm) {
+                power += sorted[i].weight
+            } else {
+                if (i > 0) {
+                    val r0 = abs(sorted[i - 1].y)
+                    val dr = r - r0
+                    if (dr > 1e-12) {
+                        val t = ((radiusMm - r0) / dr).coerceIn(0.0, 1.0)
+                        power += sorted[i].weight * t
+                    }
+                }
+                break
+            }
+        }
+        return power
+    }
+
+    /**
+     * Calculates output beam divergence as the 90% encircled angular spread (EE90 power divergence).
+     * Works for arbitrary non-Gaussian sources (LEDs, Laser Diodes, Flat-Tops, etc.).
+     */
+    private fun calculateEE90DivergenceDeg(rays: List<OpticalRay>): Double {
+        val unblocked = rays.filter { !it.isBlocked }
+        if (unblocked.isEmpty()) return 0.0
+
+        val sorted = unblocked.sortedBy { abs(atan(it.u)) }
+        val totalWeight = sorted.sumOf { it.weight }.coerceAtLeast(1e-12)
+
+        var accum = 0.0
+        val target = totalWeight * 0.90
+
+        for (ray in sorted) {
+            accum += ray.weight
+            if (accum >= target) {
+                val halfAngleRad = abs(atan(ray.u))
+                return (2.0 * halfAngleRad * 180.0 / kotlin.math.PI).coerceAtLeast(0.0)
+            }
+        }
+        return (2.0 * abs(atan(sorted.last().u)) * 180.0 / kotlin.math.PI).coerceAtLeast(0.0)
     }
 
     private fun refractSurface(ray: OpticalRay, nBefore: Double, nAfter: Double, radius: Double) {
         if (ray.isBlocked) return
         if (radius.isInfinite() || radius == 0.0) {
             // Paraxial Snell's law refraction at flat surface: u_after = (nBefore / nAfter) * u_before
-            ray.u = (nBefore / nAfter) * ray.u
+            ray.u *= (nBefore / nAfter)
         } else {
             // Paraxial Snell's law refraction matrix at curved surface:
             // u_after = (nBefore / nAfter) * u_before - ((nAfter - nBefore) / (nAfter * radius)) * y
@@ -333,10 +326,18 @@ object AnalyticalOpticsEngine {
         val initialSlope = tan(divHalfRad)
         val emitterHalfHeight = max(0.001, source.emitterHeightMm / 2.0)
 
-        // Generate phase-space sampled ray bundle with rigorous radiometric power weighting
+        // Generate phase-space sampled ray bundle with adaptive ray density
         val rawRays = mutableListOf<OpticalRay>()
-        val ySampleCount = 21
-        val uSampleCount = 41
+        val ySampleCount = when (source.sourceType) {
+            com.example.optical_designer.model.SourceType.COLLIMATED -> 61
+            com.example.optical_designer.model.SourceType.LASER_DIODE -> 61
+            else -> 51
+        }
+        val uSampleCount = when (source.sourceType) {
+            com.example.optical_designer.model.SourceType.COLLIMATED -> 161
+            com.example.optical_designer.model.SourceType.LASER_DIODE -> 161
+            else -> 101
+        }
         val deltaTheta = if (uSampleCount > 1) (2.0 * divHalfRad) / (uSampleCount - 1) else 0.0
 
         for (j in 0 until ySampleCount) {
@@ -438,7 +439,7 @@ object AnalyticalOpticsEngine {
                 currentZ = zTarget
             }
 
-            // 2. DETECTOR Screen handling: Kernel Density Estimation (KDE) Field Integration
+            // 2. DETECTOR Screen handling: Sub-bin ray interpolation & beam footprint area
             if (elem.type == OpticalElementType.DETECTOR) {
                 val ee = calculateEncircledEnergy(rayBundle)
                 val detRadiusMm = max(0.001, elem.clearApertureMm / 2.0)
@@ -447,32 +448,9 @@ object AnalyticalOpticsEngine {
                 val arrivingWeightFraction = unblockedDetRays.sumOf { it.weight }
                 val arrivingPowerW = source.opticalPowerW * arrivingWeightFraction * fresnelTransmissionFraction
 
-                val totalArrivingWeight = arrivingWeightFraction.coerceAtLeast(1e-12)
-                val nRays = unblockedDetRays.size.coerceAtLeast(1)
-
-                // Transverse spatial variance across ray bundle
-                val weightedMeanY = unblockedDetRays.sumOf { it.weight * it.y } / totalArrivingWeight
-                val weightedVarY = unblockedDetRays.sumOf { ray ->
-                    val dy = ray.y - weightedMeanY
-                    ray.weight * dy * dy
-                } / totalArrivingWeight
-                val spatialSigmaMm = sqrt(max(1e-6, weightedVarY))
-
-                // Silverman's Rule of Thumb for optimal Kernel Density Estimation bandwidth:
-                // h = sigma_y * (4 / (3 * N))^(1/5)
-                val silvermanFactor = (4.0 / (3.0 * nRays)).pow(0.2)
-                val hKde = max(1e-5, spatialSigmaMm * silvermanFactor)
-                val sqrt2h = sqrt(2.0) * hKde
-
-                // Integrate Kernel Density Estimate over circular detector aperture [-r_det, +r_det]
-                // Each ray i contributes a continuous smooth kernel fraction:
-                // Phi_i = 0.5 * [ erf((r_det - y_i) / sqrt2h) + erf((r_det + y_i) / sqrt2h) ]
-                val kdeLandedWeightFraction = unblockedDetRays.sumOf { ray ->
-                    val frac = 0.5 * (erf((detRadiusMm - ray.y) / sqrt2h) + erf((detRadiusMm + ray.y) / sqrt2h))
-                    ray.weight * frac.coerceIn(0.0, 1.0)
-                }
-
-                val landedPowerW = source.opticalPowerW * kdeLandedWeightFraction * fresnelTransmissionFraction
+                // Exact piecewise-linear sub-bin ray interpolation for aperture power collection
+                val landedWeightFraction = aperturePowerFraction(unblockedDetRays, detRadiusMm)
+                val landedPowerW = source.opticalPowerW * landedWeightFraction * fresnelTransmissionFraction
 
                 val detOpticalEfficiencyPct = if (source.opticalPowerW > 0.0) {
                     (landedPowerW / source.opticalPowerW) * 100.0
@@ -485,25 +463,19 @@ object AnalyticalOpticsEngine {
                 val encircledPowerPct = encircledPowerFraction * 100.0
                 val spilloverLossPct = 100.0 - encircledPowerPct
 
-                // Spot diameter reported as EE90 arriving spot diameter
-                val reportedSpotDiamMm = if (ee.ee90DiameterMm > 0.0) ee.ee90DiameterMm else spatialSigmaMm * 3.29
+                // Reported spot diameter (EE90 arriving spot diameter)
+                val reportedSpotDiamMm = if (ee.ee90DiameterMm > 0.0) ee.ee90DiameterMm else detRadiusMm * 2.0
 
-                val detApertureAreaM2 = kotlin.math.PI * (detRadiusMm / 1000.0) * (detRadiusMm / 1000.0)
+                // Correct Beam Irradiance using beam footprint area (NOT detector area)
+                val spotRadiusOnDetM = min(detRadiusMm, ee.ee90RadiusMm.coerceAtLeast(0.001)) / 1000.0
+                val beamFootprintAreaM2 = kotlin.math.PI * spotRadiusOnDetM * spotRadiusOnDetM
 
-                // Average Detector Irradiance: landed power integrated over circular detector screen area
-                val integratedIrradianceWm2 = if (detApertureAreaM2 > 0.0) landedPowerW / detApertureAreaM2 else 0.0
+                val integratedIrradianceWm2 = if (beamFootprintAreaM2 > 0.0) landedPowerW / beamFootprintAreaM2 else 0.0
                 val integratedIrradiancemWcm2 = integratedIrradianceWm2 / 10.0
 
-                // Peak irradiance evaluated over central EE50 spot area
-                val ee50RadiusM = max(1e-6, min(detRadiusMm, ee.ee50RadiusMm.coerceAtLeast(spatialSigmaMm * 1.17))) / 1000.0
-                val ee50AreaM2 = kotlin.math.PI * ee50RadiusM * ee50RadiusM
-                val powerInEE50W = landedPowerW * 0.50
-                val peakIrradianceWm2 = if (ee50AreaM2 > 0.0) powerInEE50W / ee50AreaM2 else integratedIrradianceWm2
-
-                val spotRadiusOnDetM = min(detRadiusMm, ee.ee90RadiusMm.coerceAtLeast(0.001)) / 1000.0
-                val spotAreaM2 = kotlin.math.PI * spotRadiusOnDetM * spotRadiusOnDetM
+                val detApertureAreaM2 = kotlin.math.PI * (detRadiusMm / 1000.0) * (detRadiusMm / 1000.0)
                 val apertureFillPct = if (detApertureAreaM2 > 0.0) {
-                    ((spotAreaM2 / detApertureAreaM2) * 100.0).coerceIn(0.0, 100.0)
+                    ((beamFootprintAreaM2 / detApertureAreaM2) * 100.0).coerceIn(0.0, 100.0)
                 } else 0.0
 
                 val effectiveFocusZ = lastWaistZMm ?: calculateSystemFocalZ(activeElements)
@@ -521,7 +493,7 @@ object AnalyticalOpticsEngine {
                     apertureFillPct = apertureFillPct,
                     integratedIrradianceWm2 = integratedIrradianceWm2,
                     integratedIrradiancemWcm2 = integratedIrradiancemWcm2,
-                    peakIrradianceWm2 = peakIrradianceWm2,
+                    peakIrradianceWm2 = integratedIrradianceWm2,
                     bestFocusZMm = effectiveFocusZ,
                     ee50DiameterMm = ee.ee50RadiusMm * 2.0,
                     ee80DiameterMm = ee.ee80RadiusMm * 2.0,
@@ -556,8 +528,7 @@ object AnalyticalOpticsEngine {
             // 4. Matrix ABCD Refraction and Thickness Propagation
             when (elem.type) {
                 OpticalElementType.PLANO_CONVEX,
-                OpticalElementType.BICONVEX,
-                OpticalElementType.ACHROMATIC_DOUBLET -> {
+                OpticalElementType.BICONVEX -> {
                     val presc = getLensPrescription(elem)
 
                     // Refraction at Surface 1 (Air -> Glass)
@@ -565,62 +536,26 @@ object AnalyticalOpticsEngine {
                         refractSurface(ray, nBefore = 1.0, nAfter = presc.nGlass, radius = presc.r1)
                     }
 
-                    if (!presc.isDoublet) {
-                        // Single glass element (Plano-Convex or Biconvex)
-                        val glassThickness = max(0.001, zBack - zFront)
-                        propagateRayBundleInPlace(rayBundle, glassThickness)
+                    // Single glass element (Plano-Convex or Biconvex)
+                    val glassThickness = max(0.001, zBack - zFront)
+                    propagateRayBundleInPlace(rayBundle, glassThickness)
 
-                        val exitTopYLens = getTopUnblockedRadius(rayBundle, transmittedTopY)
-                        segments.add(
-                            BeamSegment(
-                                startZ = zFront,
-                                endZ = zBack,
-                                startTopY = transmittedTopY,
-                                startBottomY = -transmittedTopY,
-                                endTopY = exitTopYLens,
-                                endBottomY = -exitTopYLens,
-                                color = sourceColor
-                            )
+                    val exitTopYLens = getTopUnblockedRadius(rayBundle, transmittedTopY)
+                    segments.add(
+                        BeamSegment(
+                            startZ = zFront,
+                            endZ = zBack,
+                            startTopY = transmittedTopY,
+                            startBottomY = -transmittedTopY,
+                            endTopY = exitTopYLens,
+                            endBottomY = -exitTopYLens,
+                            color = sourceColor
                         )
+                    )
 
-                        // Refraction at Surface 2 (Glass -> Air)
-                        for (ray in rayBundle) {
-                            refractSurface(ray, nBefore = presc.nGlass, nAfter = 1.0, radius = presc.r2)
-                        }
-                    } else {
-                        // Achromatic Doublet (2 glasses, 3 surfaces)
-                        val totalT = max(0.001, zBack - zFront)
-                        val crownT = (presc.crownThickness).coerceIn(0.001, totalT - 0.001)
-                        val flintT = max(0.001, totalT - crownT)
-
-                        // Propagate through Crown glass
-                        propagateRayBundleInPlace(rayBundle, crownT)
-
-                        // Refract at cemented interface
-                        for (ray in rayBundle) {
-                            refractSurface(ray, nBefore = presc.nGlass, nAfter = presc.nFlint, radius = presc.rInt)
-                        }
-
-                        // Propagate through Flint glass
-                        propagateRayBundleInPlace(rayBundle, flintT)
-
-                        val exitTopYLens = getTopUnblockedRadius(rayBundle, transmittedTopY)
-                        segments.add(
-                            BeamSegment(
-                                startZ = zFront,
-                                endZ = zBack,
-                                startTopY = transmittedTopY,
-                                startBottomY = -transmittedTopY,
-                                endTopY = exitTopYLens,
-                                endBottomY = -exitTopYLens,
-                                color = sourceColor
-                            )
-                        )
-
-                        // Refract at Surface 3 (Flint -> Air)
-                        for (ray in rayBundle) {
-                            refractSurface(ray, nBefore = presc.nFlint, nAfter = 1.0, radius = presc.r2)
-                        }
+                    // Refraction at Surface 2 (Glass -> Air)
+                    for (ray in rayBundle) {
+                        refractSurface(ray, nBefore = presc.nGlass, nAfter = 1.0, radius = presc.r2)
                     }
 
                     fresnelTransmissionFraction *= elem.effectiveTransmissionFraction
@@ -696,28 +631,16 @@ object AnalyticalOpticsEngine {
             }
         }
 
-        // Smooth, non-aliasing FWHM Output Divergence calculation from radiometric angular variance
+        // Calculate output beam divergence using EE90 angular width
         val unblockedRays = rayBundle.filter { !it.isBlocked }
         val outputDivergenceDeg = if (unblockedRays.isNotEmpty()) {
-            val totalWeight = unblockedRays.sumOf { it.weight }.coerceAtLeast(1e-12)
-            val weightedMeanTheta = unblockedRays.sumOf { it.weight * atan(it.u) } / totalWeight
-            val weightedVariance = unblockedRays.sumOf { ray ->
-                val theta = atan(ray.u) - weightedMeanTheta
-                ray.weight * theta * theta
-            } / totalWeight
-
-            val rmsHalfAngleRad = sqrt(max(0.0, weightedVariance))
-            // FWHM full angle for radiometric ray distribution (2 * sqrt(2 * ln(2)) * sigma_rms)
-            val fwhmFullAngleRad = 2.0 * sqrt(2.0 * kotlin.math.ln(2.0)) * rmsHalfAngleRad
-            (fwhmFullAngleRad * 180.0 / kotlin.math.PI).coerceAtLeast(0.0)
+            calculateEE90DivergenceDeg(unblockedRays)
         } else source.divergenceYDeg
 
         val detectorZ = detectorAnalysisResult?.detectorZMm
             ?: (activeElements.firstOrNull { it.type == OpticalElementType.DETECTOR }?.positionZMm
                 ?: (activeElements.lastOrNull()?.positionZMm ?: 150.0))
         val spotSize = detectorAnalysisResult?.spotDiameterMm ?: calculateSpotSizeAtZ(segments, detectorZ)
-
-        val sphericalAb = calculateSphericalAberration(activeElements)
 
         val netEfficiencyFraction = geometricCollectionFraction * fresnelTransmissionFraction
         val geometricCollectionPct = (geometricCollectionFraction * 100.0).coerceIn(0.0, 100.0)
@@ -743,6 +666,9 @@ object AnalyticalOpticsEngine {
         val effectiveFocalZ = lastWaistZMm ?: calculateSystemFocalZ(activeElements)
 
         val finalEE = calculateEncircledEnergy(rayBundle)
+        val lastOpticZ = activeElements.lastOrNull { it.type != OpticalElementType.DETECTOR }?.let {
+            if (it.type == OpticalElementType.PLANO_CONVEX) it.positionZMm + it.thicknessMm else it.positionZMm + it.thicknessMm / 2.0
+        } ?: 0.0
 
         return AnalyticalOpticsResult(
             beamSegments = segments,
@@ -755,7 +681,7 @@ object AnalyticalOpticsEngine {
             outputDivergenceDeg = outputDivergenceDeg,
             spotDiameterAtDetectorMm = spotSize,
             focalDistanceMm = if (effectiveFocalZ == null || effectiveFocalZ.isNaN()) 0.0 else effectiveFocalZ,
-            sphericalAberrationMm = sphericalAb,
+            sphericalAberrationMm = 0.0,
             sourcePowerW = source.opticalPowerW,
             outputPowerW = finalOutputPowerW,
             outputSolidAngleSr = solidAngleSr,
@@ -764,7 +690,11 @@ object AnalyticalOpticsEngine {
             ee50DiameterMm = finalEE.ee50RadiusMm * 2.0,
             ee80DiameterMm = finalEE.ee80RadiusMm * 2.0,
             ee90DiameterMm = finalEE.ee90DiameterMm,
-            ee95DiameterMm = finalEE.ee95RadiusMm * 2.0
+            ee95DiameterMm = finalEE.ee95RadiusMm * 2.0,
+            exitZMm = lastOpticZ,
+            finalRays = unblockedRays.map { ray ->
+                OpticalRay(ray.y, ray.u, ray.y0, weight = ray.weight, isBlocked = ray.isBlocked)
+            }
         )
     }
 
@@ -772,29 +702,37 @@ object AnalyticalOpticsEngine {
         result: AnalyticalOpticsResult,
         targetZMm: Double
     ): IrradianceAtRangeResult {
-        val spotDiamMm = calculateSpotSizeAtZ(result.beamSegments, targetZMm)
-        val spotRadiusM = (spotDiamMm / 2.0) / 1000.0
-        val areaM2 = kotlin.math.PI * spotRadiusM * spotRadiusM
+        val dz = max(0.0, targetZMm - result.exitZMm)
 
-        val irradianceWm2 = if (areaM2 > 0.0) {
-            result.outputPowerW / areaM2
+        // Propagate unblocked final rays to exact target Z range
+        val propagatedRays = result.finalRays.filter { !it.isBlocked }.map { ray ->
+            val yAtZ = ray.y + ray.u * dz
+            OpticalRay(yAtZ, ray.u, ray.y0, weight = ray.weight, isBlocked = false)
+        }
+
+        val ee = calculateEncircledEnergy(propagatedRays)
+        val ee90DiamMm = if (ee.ee90DiameterMm > 0.0) ee.ee90DiameterMm else calculateSpotSizeAtZ(result.beamSegments, targetZMm)
+        val ee80DiamMm = ee.ee80RadiusMm * 2.0
+        val ee50DiamMm = ee.ee50RadiusMm * 2.0
+
+        val spotRadiusM = (ee90DiamMm / 2.0) / 1000.0
+        val spotAreaM2 = kotlin.math.PI * spotRadiusM * spotRadiusM
+
+        val irradianceWm2 = if (spotAreaM2 > 0.0) {
+            (0.90 * result.outputPowerW) / spotAreaM2
         } else {
             0.0
         }
 
-        val ee90Diam = if (result.ee90DiameterMm > 0.0) result.ee90DiameterMm else spotDiamMm
-        val ee80Diam = if (result.ee80DiameterMm > 0.0) result.ee80DiameterMm else spotDiamMm * 0.89
-        val ee50Diam = if (result.ee50DiameterMm > 0.0) result.ee50DiameterMm else spotDiamMm * 0.59
-
         return IrradianceAtRangeResult(
             targetZMm = targetZMm,
-            spotDiameterMm = spotDiamMm,
-            spotAreaM2 = areaM2,
+            spotDiameterMm = ee90DiamMm,
+            spotAreaM2 = spotAreaM2,
             irradianceWm2 = irradianceWm2,
             irradiancemWcm2 = irradianceWm2 / 10.0,
-            ee50DiameterMm = ee50Diam,
-            ee80DiameterMm = ee80Diam,
-            ee90DiameterMm = ee90Diam
+            ee50DiameterMm = ee50DiamMm,
+            ee80DiameterMm = ee80DiamMm,
+            ee90DiameterMm = ee90DiamMm
         )
     }
 
@@ -932,7 +870,7 @@ object AnalyticalOpticsEngine {
 
                 // Refraction at Surface 1
                 if (presc.r1.isInfinite()) {
-                    rayU = rayU / presc.nGlass
+                    rayU /= presc.nGlass
                 } else {
                     val powerCoeff = (presc.nGlass - 1.0) / (presc.nGlass * presc.r1)
                     rayU = (rayU / presc.nGlass) - powerCoeff * rayY
@@ -946,7 +884,7 @@ object AnalyticalOpticsEngine {
 
                     // Refraction at Surface 2
                     if (presc.r2.isInfinite()) {
-                        rayU = rayU * presc.nGlass
+                        rayU *= presc.nGlass
                     } else {
                         val powerCoeff = (1.0 - presc.nGlass) / (1.0 * presc.r2)
                         rayU = (presc.nGlass * rayU) - powerCoeff * rayY
@@ -964,7 +902,7 @@ object AnalyticalOpticsEngine {
                         val powerCoeff = (presc.nFlint - presc.nGlass) / (presc.nFlint * presc.rInt)
                         rayU = (presc.nGlass / presc.nFlint) * rayU - powerCoeff * rayY
                     } else {
-                        rayU = (presc.nGlass / presc.nFlint) * rayU
+                        rayU *= (presc.nGlass / presc.nFlint)
                     }
 
                     // Flint propagation
@@ -976,7 +914,7 @@ object AnalyticalOpticsEngine {
                         val powerCoeff = (1.0 - presc.nFlint) / (1.0 * presc.r2)
                         rayU = (presc.nFlint * rayU) - powerCoeff * rayY
                     } else {
-                        rayU = rayU * presc.nFlint
+                        rayU *= presc.nFlint
                     }
                 }
             }
@@ -998,36 +936,5 @@ object AnalyticalOpticsEngine {
         val topY = seg.startTopY + t * (seg.endTopY - seg.startTopY)
         val bottomY = seg.startBottomY + t * (seg.endBottomY - seg.startBottomY)
         return abs(topY - bottomY)
-    }
-
-    private fun calculateSphericalAberration(
-        elements: List<OpticalElement>
-    ): Double {
-        var totalLsa = 0.0
-        for (elem in elements) {
-            val type = elem.type
-            val f = elem.focalLengthMm
-            val clearApertureMm = elem.clearApertureMm
-            val material = elem.material
-
-            if (type == OpticalElementType.APERTURE_STOP || type == OpticalElementType.DETECTOR) continue
-            if (f == 0.0) continue
-
-            val nd = material.nd
-            val yIn = clearApertureMm / 2.0
-
-            val shapeFactor = when (type) {
-                OpticalElementType.PLANO_CONVEX -> if (elem.orientation == com.example.optical_designer.model.LensOrientation.CURVED_FACE_LEFT) 0.08 else 0.25
-                OpticalElementType.ACHROMATIC_DOUBLET -> 0.04
-                OpticalElementType.BICONVEX -> 0.35
-                OpticalElementType.PARABOLIC_MIRROR -> 0.01
-                OpticalElementType.APERTURE_STOP, OpticalElementType.DETECTOR -> 0.0
-            }
-
-            val lsa = (yIn * yIn / (2.0 * abs(f))) * ((nd * nd) / ((nd - 1.0) * (nd - 1.0))) * shapeFactor
-            totalLsa += lsa
-        }
-
-        return abs(totalLsa)
     }
 }
