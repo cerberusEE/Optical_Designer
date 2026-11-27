@@ -282,6 +282,26 @@ object AnalyticalOpticsEngine {
         }
     }
 
+    /**
+     * High-precision Error Function erf(x) via Abramowitz & Stegun 7.1.26.
+     * Maximum absolute numerical error < 1.5e-7 across all real numbers.
+     */
+    private fun erf(x: Double): Double {
+        val sign = if (x < 0.0) -1.0 else 1.0
+        val absX = abs(x)
+        if (absX > 4.0) return sign * 1.0
+        val p = 0.3275911
+        val a1 = 0.254829592
+        val a2 = -0.284496736
+        val a3 = 1.421413741
+        val a4 = -1.453152027
+        val a5 = 1.061405429
+        val t = 1.0 / (1.0 + p * absX)
+        val poly = t * (a1 + t * (a2 + t * (a3 + t * (a4 + t * a5))))
+        val y = 1.0 - poly * kotlin.math.exp(-absX * absX)
+        return sign * y
+    }
+
     private fun refractSurface(ray: OpticalRay, nBefore: Double, nAfter: Double, radius: Double) {
         if (ray.isBlocked) return
         if (radius.isInfinite() || radius == 0.0) {
@@ -418,7 +438,7 @@ object AnalyticalOpticsEngine {
                 currentZ = zTarget
             }
 
-            // 2. DETECTOR Screen handling: Encircled Energy (EE90) spot size & robust irradiance
+            // 2. DETECTOR Screen handling: Kernel Density Estimation (KDE) Field Integration
             if (elem.type == OpticalElementType.DETECTOR) {
                 val ee = calculateEncircledEnergy(rayBundle)
                 val detRadiusMm = max(0.001, elem.clearApertureMm / 2.0)
@@ -427,23 +447,46 @@ object AnalyticalOpticsEngine {
                 val arrivingWeightFraction = unblockedDetRays.sumOf { it.weight }
                 val arrivingPowerW = source.opticalPowerW * arrivingWeightFraction * fresnelTransmissionFraction
 
-                val landedRays = unblockedDetRays.filter { abs(it.y) <= detRadiusMm }
-                val landedWeightFraction = landedRays.sumOf { it.weight }
-                val landedPowerW = source.opticalPowerW * landedWeightFraction * fresnelTransmissionFraction
+                val totalArrivingWeight = arrivingWeightFraction.coerceAtLeast(1e-12)
+                val nRays = unblockedDetRays.size.coerceAtLeast(1)
+
+                // Transverse spatial variance across ray bundle
+                val weightedMeanY = unblockedDetRays.sumOf { it.weight * it.y } / totalArrivingWeight
+                val weightedVarY = unblockedDetRays.sumOf { ray ->
+                    val dy = ray.y - weightedMeanY
+                    ray.weight * dy * dy
+                } / totalArrivingWeight
+                val spatialSigmaMm = sqrt(max(1e-6, weightedVarY))
+
+                // Silverman's Rule of Thumb for optimal Kernel Density Estimation bandwidth:
+                // h = sigma_y * (4 / (3 * N))^(1/5)
+                val silvermanFactor = (4.0 / (3.0 * nRays)).pow(0.2)
+                val hKde = max(1e-5, spatialSigmaMm * silvermanFactor)
+                val sqrt2h = sqrt(2.0) * hKde
+
+                // Integrate Kernel Density Estimate over circular detector aperture [-r_det, +r_det]
+                // Each ray i contributes a continuous smooth kernel fraction:
+                // Phi_i = 0.5 * [ erf((r_det - y_i) / sqrt2h) + erf((r_det + y_i) / sqrt2h) ]
+                val kdeLandedWeightFraction = unblockedDetRays.sumOf { ray ->
+                    val frac = 0.5 * (erf((detRadiusMm - ray.y) / sqrt2h) + erf((detRadiusMm + ray.y) / sqrt2h))
+                    ray.weight * frac.coerceIn(0.0, 1.0)
+                }
+
+                val landedPowerW = source.opticalPowerW * kdeLandedWeightFraction * fresnelTransmissionFraction
 
                 val detOpticalEfficiencyPct = if (source.opticalPowerW > 0.0) {
                     (landedPowerW / source.opticalPowerW) * 100.0
                 } else 0.0
 
-                val encircledPowerFraction = if (arrivingWeightFraction > 0.0) {
-                    (landedWeightFraction / arrivingWeightFraction).coerceIn(0.0, 1.0)
+                val encircledPowerFraction = if (arrivingPowerW > 0.0) {
+                    (landedPowerW / arrivingPowerW).coerceIn(0.0, 1.0)
                 } else 0.0
 
                 val encircledPowerPct = encircledPowerFraction * 100.0
                 val spilloverLossPct = 100.0 - encircledPowerPct
 
                 // Spot diameter reported as EE90 arriving spot diameter
-                val reportedSpotDiamMm = if (ee.ee90DiameterMm > 0.0) ee.ee90DiameterMm else getTopUnblockedRadius(rayBundle, 0.1) * 2.0
+                val reportedSpotDiamMm = if (ee.ee90DiameterMm > 0.0) ee.ee90DiameterMm else spatialSigmaMm * 3.29
 
                 val detApertureAreaM2 = kotlin.math.PI * (detRadiusMm / 1000.0) * (detRadiusMm / 1000.0)
 
@@ -452,7 +495,7 @@ object AnalyticalOpticsEngine {
                 val integratedIrradiancemWcm2 = integratedIrradianceWm2 / 10.0
 
                 // Peak irradiance evaluated over central EE50 spot area
-                val ee50RadiusM = max(1e-6, min(detRadiusMm, ee.ee50RadiusMm)) / 1000.0
+                val ee50RadiusM = max(1e-6, min(detRadiusMm, ee.ee50RadiusMm.coerceAtLeast(spatialSigmaMm * 1.17))) / 1000.0
                 val ee50AreaM2 = kotlin.math.PI * ee50RadiusM * ee50RadiusM
                 val powerInEE50W = landedPowerW * 0.50
                 val peakIrradianceWm2 = if (ee50AreaM2 > 0.0) powerInEE50W / ee50AreaM2 else integratedIrradianceWm2

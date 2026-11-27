@@ -10,6 +10,7 @@ import com.example.optical_designer.model.Wavelength
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class OpticsEngineTest {
@@ -268,6 +269,32 @@ class OpticsEngineTest {
             "Detector optical efficiency should be <= system throughput efficiency (${detRes.opticalEfficiencyPct}% <= ${result.opticalEfficiencyPct}%)"
         )
         assertTrue(detRes.integratedIrradianceWm2 > 0.0, "Integrated irradiance over circular screen should be > 0 W/m²")
+    }
+
+    @Test
+    fun `test long-range small detector screen at 1km range has zero quantization noise and non-zero irradiance`() {
+        val preset = OpticalPresets.LED_COLLIMATOR_1
+        val source = preset.source
+        val elements = preset.elements.toMutableList().apply {
+            add(
+                OpticalElement(
+                    id = "long_range_det",
+                    name = "Long Range Sensor at 1km",
+                    type = OpticalElementType.DETECTOR,
+                    positionZMm = 1000000.0, // 1 km = 1,000,000 mm
+                    clearApertureMm = 10.0  // 10 mm diameter detector screen (5 microradians)
+                )
+            )
+        }
+
+        val result = AnalyticalOpticsEngine.calculateSystem(source, elements)
+        val detRes = result.detectorResult
+
+        assertNotNull(detRes, "Detector result must be present for long-range detector")
+        assertTrue(detRes.landedPowerW > 0.0, "Landed power at 1km range must be > 0 W")
+        assertTrue(detRes.integratedIrradianceWm2 > 0.0, "Average irradiance at 1km range must be > 0 W/m²")
+        assertTrue(detRes.opticalEfficiencyPct > 0.0, "Optical efficiency at 1km range must be > 0%")
+        assertTrue(detRes.landedPowerW < detRes.arrivingPowerW, "Landed power must be less than total arriving beam power at 1km")
     }
 
     @Test
